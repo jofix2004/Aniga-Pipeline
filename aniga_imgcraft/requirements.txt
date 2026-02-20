@@ -19,7 +19,6 @@ scipy
 sentencepiece
 safetensors
 omegaconf
-comfy-cli
 fastapi
 uvicorn
 python-multipart
