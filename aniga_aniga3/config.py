@@ -3,11 +3,13 @@
 import torch
 import os
 
-# --- ĐƯỜNG DẪN MODEL CỐ ĐỊNH (Colab) ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- ĐƯỜNG DẪN MODEL CỐ ĐỊNH (Dynamic) ---
 MODEL_PATHS = [
-    "/content/Aniga3/model1.pt",  # YOLOv8 (Ultralytics)
-    "/content/Aniga3/model2.pt",  # YOLOv9 gốc (DetectMultiBackend)
-    "/content/Aniga3/model3.pt",  # YOLOv11 (Ultralytics)
+    os.path.join(BASE_DIR, "model1.pt"),  # YOLOv8 (Ultralytics)
+    os.path.join(BASE_DIR, "model2.pt"),  # YOLOv9 gốc (DetectMultiBackend)
+    os.path.join(BASE_DIR, "model3.pt"),  # YOLOv11 (Ultralytics)
 ]
 
 # Model 2 là YOLOv9 gốc (dùng DetectMultiBackend thay vì Ultralytics YOLO)
