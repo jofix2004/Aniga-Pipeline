@@ -218,7 +218,8 @@ async def upload_bundle(file: UploadFile = File(...)):
     if not file.filename.endswith(".aniga"):
         raise HTTPException(400, "Chỉ nhận file .aniga")
 
-    # Lưu file
+    # Lưu file (đảm bảo folder tồn tại — Drive có thể lag)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     bundle_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(bundle_path, 'wb') as out:
         content = await file.read()
