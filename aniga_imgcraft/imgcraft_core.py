@@ -198,10 +198,13 @@ class FluxProcessor:
                         
                         # 2. VAE Encode
                         latent = self.nodes["vae_encode"].encode(self.vae, batch_tensor)[0]
+                        del batch_tensor  # Free input tensor
                         
                         # 3. Conditioning
                         conditioning = self.nodes["ref_latent"].append(prompt_encode, latent)[0]
+                        del latent  # Free latent
                         positive = self.nodes["flux_guidance"].append(conditioning, 3.5)[0]
+                        del conditioning  # Free conditioning
 
                         # 4. Empty Latent
                         w, h = chunk[0].size 
@@ -216,16 +219,24 @@ class FluxProcessor:
                             sampler_name="dpmpp_2m", scheduler="beta", positive=positive, negative=negative,
                             latent_image=output_latent, start_at_step=0, end_at_step=1000, return_with_leftover_noise="disable"
                         )[0]
+                        del output_latent, positive  # Free after sampling
                         
                         print("   ► Decoding Batch...")
                         decoded_tensor = self.nodes["vae_decode"].decode(self.vae, image_out_latent)[0]
+                        del image_out_latent  # Free sampled latent
                         
-                        # 6. Extract
+                        # 6. Extract to CPU (move off GPU immediately)
                         for b in range(current_batch_len):
                             single_tensor = decoded_tensor[b] 
                             img_pil = Image.fromarray((single_tensor.cpu().numpy() * 255).astype(np.uint8))
                             processed_results.append(img_pil)
+                        del decoded_tensor, single_tensor  # Free decoded tensor
                             
+                        # 7. VRAM Cleanup after each batch
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        model_management.soft_empty_cache()
+                        
                         # Success -> Move to next chunk
                         current_chunk_index += MAX_BATCH_SIZE
                         processed_count += current_batch_len
@@ -255,11 +266,17 @@ class FluxProcessor:
                             raise e
 
                 print(f"✅ [Flux] Done. Processed {len(processed_results)}/{total_images} images.")
+                
+                # Final VRAM cleanup — giải phóng prompt tensors
+                del prompt_encode, negative
+                gc.collect()
+                torch.cuda.empty_cache()
+                model_management.soft_empty_cache()
+                
                 return processed_results
             
             except Exception as e:
                 print(f"❌ Render Error: {e}")
-                import gc
                 gc.collect()
                 torch.cuda.empty_cache()
                 model_management.soft_empty_cache()
