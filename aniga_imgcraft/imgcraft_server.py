@@ -149,7 +149,9 @@ def _process_single_page(raw_pil):
         tiles_pil = []
         for (x, y) in coords:
             box = (x, y, x + size, y + size)
-            tiles_pil.append(master_img_pil.crop(box))
+            cropped_tile = master_img_pil.crop(box)
+            # V2 Pipeline Standard: Resize lên 1280x1280 trước khi cho vào Flux
+            tiles_pil.append(cropped_tile.resize((1280, 1280), imgcraft_core.Image.Resampling.LANCZOS))
 
         # 3. Clean bằng FluxProcessor (GPU)
         clean_tiles_pil = state.flux_processor.process(tiles_pil)
