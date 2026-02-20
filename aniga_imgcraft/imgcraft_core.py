@@ -138,6 +138,30 @@ class FluxProcessor:
             print(f"❌ [Flux] Initialization Error: {e}")
             self.ready = False
 
+    def unload(self):
+        """Giải phóng HOÀN TOÀN VRAM — gọi trước khi re-init hoặc khi end cell."""
+        print("🗑️ [Flux] Unloading all models from VRAM...")
+        try:
+            import comfy.model_management as model_management
+            model_management.unload_all_models()
+            model_management.soft_empty_cache()
+        except: pass
+        
+        for attr in ['model', 'vae', 'clip']:
+            if hasattr(self, attr):
+                try: delattr(self, attr)
+                except: pass
+        
+        self.nodes = {}
+        self.ready = False
+        
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        
+        print(f"✅ [Flux] VRAM freed. Current: {torch.cuda.memory_allocated()/1024**3:.2f}GB / {torch.cuda.memory_reserved()/1024**3:.2f}GB reserved")
+
     def _pil_to_tensor(self, pil_img):
         img = np.array(pil_img).astype(np.float32) / 255.0
         img = torch.from_numpy(img).unsqueeze(0)
