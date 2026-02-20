@@ -1,31 +1,18 @@
-
-# ImgCraft Pipeline V2 - All-In-One (PARITY VERSION)
-# Contains EXACT copy of valid logic from standalone_pipeline.py
-# Orchestrates Crop (CPU) -> Flux Clean (GPU) -> Stitch (CPU)
+# ImgCraft Core — FluxProcessor + Image Processing Functions
+# Module thuần túy, được gọi bởi imgcraft_server.py
 
 import os
 import time
-import socket
-import atexit
-import signal
-import shutil
-import threading
 import sys
 import cv2
 import numpy as np
-import json # <--- Added json import
 import gc
-import subprocess # Fix for is_pid_running
-from PIL import Image, ImageDraw
+from PIL import Image
 import random
-import torch # Explicit import for FluxProcessor type hints
-# ===================================================================
-# COMPONENT 1: FLUX PROCESSOR (CORE LOGIC FROM IMGCRAFT)
-# ===================================================================
-
+import torch
 
 # ===================================================================
-# COMPONENT 1: FLUX PROCESSOR (CORE LOGIC FROM IMGCRAFT)
+# FLUX PROCESSOR (GPU)
 # ===================================================================
 class FluxProcessor:
     def __init__(self):
@@ -135,7 +122,7 @@ class FluxProcessor:
 
             # 4. Load LoRAs
             model = self.nodes["lora_loader"].load_lora_model_only(model, "flux_1_turbo_alpha.safetensors", 1.0)[0]
-            model = self.nodes["lora_loader"].load_lora_model_only(model, "AniGaKontext2080v3_Full_000000650.safetensors", 1.0)[0]
+            model = self.nodes["lora_loader"].load_lora_model_only(model, "AniGaKontext_1024x64x1605_v4_000001400.safetensors", 1.0)[0]
             self.model = model
             
             # FINAL CLEANUP
@@ -277,6 +264,9 @@ class FluxProcessor:
                 torch.cuda.empty_cache()
                 model_management.soft_empty_cache()
                 raise
+
+
+
 # ===================================================================
 # CORE FUNCTIONS FROM STANDALONE_PIPELINE.PY
 # ===================================================================
@@ -302,39 +292,7 @@ def center_image(img_pil, canvas_size=2048, margin=20):
         
     return canvas
 
-def crop_4_tiles(img_pil, output_base, size=1024):
-    """Crop 4 predefined tiles (No Preview)"""
-    coords = [
-        (250, 20),         # Tile 0: Top-Left
-        (774, 20),        # Tile 1: Top-Right
-        (250, 1004),      # Tile 2: Bottom-Left
-        (774, 1004)     # Tile 3: Bottom-Right
-    ]
-    
-    tile_paths = []
-    base_name, ext = os.path.splitext(output_base)
-    # base_name examples: ".../Projects/Ani-001/raw_tiles/Ani-001"
-    
-    for i, (x, y) in enumerate(coords):
-        box = (x, y, x + size, y + size)
-        tile = img_pil.crop(box)
-        
-        # Save tile with explicit system name: Ani-001_tile_0.png
-        # output_base is passed as joined path, so splitext works on the full path
-        tile_filename = f"{os.path.basename(base_name)}_tile_{i}{ext}" 
-        tile_dir = os.path.dirname(base_name)
-        tile_path = os.path.join(tile_dir, tile_filename)
-        
-        # Atomic Write
-        tmp_path = tile_path + ".tmp"
-        tile.save(tmp_path, format="PNG", quality=95)
-        os.replace(tmp_path, tile_path)
-        
-        tile_paths.append(tile_path)
-        
-    return tile_paths, None
 
-# ... (Helper functions restored) ...
 
 def preprocess_grayscale_invert(img):
     """Convert to grayscale and invert colors"""
