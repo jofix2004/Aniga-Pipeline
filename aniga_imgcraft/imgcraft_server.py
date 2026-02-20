@@ -27,7 +27,9 @@ import numpy as np
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORK_DIR = os.environ.get("ANIGA_WORK_DIR", "/content/drive/MyDrive/Aniga_Work/imgcraft")
 UPLOAD_DIR = os.path.join(WORK_DIR, "_uploads")
+SAVE_DIR = os.environ.get("ANIGA_SAVE_DIR", "/content/drive/MyDrive/Aniga_Work/imgcraft/_output")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 app = FastAPI(title="ImgCraft Chapter Processor")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -333,6 +335,25 @@ def download(project_id: str):
 
 
 # ============================================================
+# API: Save to Google Drive
+# ============================================================
+@app.post("/api/save-drive/{project_id}")
+def save_to_drive(project_id: str):
+    item = _find_queue_item(project_id)
+    if not item:
+        raise HTTPException(404, "Không tìm thấy")
+
+    manifest = cm.read_manifest_from_dir(item["working_dir"])
+    filename = f"{manifest['project_name'].replace(' ', '_')}.aniga"
+    save_path = os.path.join(SAVE_DIR, filename)
+
+    # Pack latest từ working dir → save thẳng vào Drive
+    cm.pack_to_bundle(item["working_dir"], save_path)
+    print(f"💾 Saved to Drive: {save_path}")
+    return {"status": "ok", "path": save_path, "filename": filename}
+
+
+# ============================================================
 # API: Remove from queue
 # ============================================================
 @app.delete("/api/queue/{project_id}")
@@ -462,6 +483,7 @@ HTML = """<!DOCTYPE html>
             }else{
                 actionsHtml=`<button class="btn-start" ${canStart?'':'disabled'} onclick="startProject('${q.id}')">▶ Start</button>`;
             }
+            actionsHtml+=`<button class="btn-dl" onclick="saveToDrive('${q.id}')">💾 Drive</button>`;
             actionsHtml+=`<button class="btn-dl" onclick="downloadProject('${q.id}')">📥</button>`;
             if(!q.is_running)actionsHtml+=`<button class="btn-rm" onclick="removeProject('${q.id}')">🗑️</button>`;
 
@@ -496,6 +518,15 @@ HTML = """<!DOCTYPE html>
         toast('⏸ Đang pause (chờ xong trang hiện tại)...');refreshQueue();
     }
     function downloadProject(id){window.location.href=`/api/download/${id}`;}
+    async function saveToDrive(id){
+        toast('💾 Đang lưu vào Drive...');
+        try{
+            const res=await fetch(`/api/save-drive/${id}`,{method:'POST'});
+            const data=await res.json();
+            if(!res.ok){toast('❌ '+data.detail,5000);return;}
+            toast(`✅ Đã lưu: ${data.filename}`,5000);
+        }catch(e){toast('❌ Lỗi: '+e);}
+    }
     async function removeProject(id){
         if(!confirm('Xóa dự án khỏi hàng chờ?'))return;
         await fetch(`/api/queue/${id}`,{method:'DELETE'});
