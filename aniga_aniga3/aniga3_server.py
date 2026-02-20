@@ -19,9 +19,8 @@ import uvicorn
 import sys
 import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ANIGA3_MAIN_DIR = os.path.join(os.path.dirname(BASE_DIR), "Aniga3-main")
-if ANIGA3_MAIN_DIR not in sys.path:
-    sys.path.append(ANIGA3_MAIN_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 
 import chapter_manager as cm
 import core as aniga3_core
