@@ -175,27 +175,10 @@ def _process_single_page(raw_pil):
 
             tile_results.append(res)
             
-        # 5. Smart Stitch
+        # 5. Smart Stitch → trả ảnh clean 2048x2048
         final_pil = imgcraft_core.stack_images(master_cv, tile_results)
-        
-        # Crop lại kích thước gốc (bỏ lề canvas)
-        original_width, original_height = raw_pil.size
-        # Kích thước resize lúc canvas
-        canvas_size = 2048
-        margin = 20
-        max_size = canvas_size - (margin * 2)
-        scale = min(max_size / original_width, max_size / original_height)
-        new_width = int(original_width * scale)
-        new_height = int(original_height * scale)
-        
-        x = (canvas_size - new_width) // 2
-        y = (canvas_size - new_height) // 2
-        
-        final_cropped = final_pil.crop((x, y, x + new_width, y + new_height))
-        # Resize về original size chuẩn
-        final_cropped = final_cropped.resize((original_width, original_height), imgcraft_core.Image.Resampling.LANCZOS)
 
-        return final_cropped
+        return final_pil
 
     except Exception as e:
         print(f"❌ Core processing error: {e}")
