@@ -2,10 +2,12 @@
 # Quản lý dự án .aniga: tạo/mở/update/resolve/preview
 
 import os
+import io
 import json
 import uuid
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from datetime import datetime
 
@@ -55,7 +57,6 @@ def _get_project_list():
 
 
 def _get_project_path(filename):
-    """Trả về đường dẫn tuyệt đối tới file .aniga trong projects/."""
     fpath = os.path.join(PROJECTS_DIR, filename)
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail=f"Không tìm thấy: {filename}")
@@ -79,13 +80,11 @@ async def create_project(
     project_name: str = Form(...),
     files: list[UploadFile] = File(...)
 ):
-    """Upload ảnh + tạo file .aniga mới."""
     if not project_name.strip():
         raise HTTPException(400, "Tên dự án không được trống")
     if not files:
         raise HTTPException(400, "Cần ít nhất 1 ảnh")
 
-    # Lưu ảnh tạm
     tmp_dir = tempfile.mkdtemp()
     try:
         image_paths = []
@@ -96,12 +95,10 @@ async def create_project(
                 out.write(content)
             image_paths.append(tmp_path)
 
-        # Tạo bundle
         safe_name = "".join(c for c in project_name if c.isalnum() or c in " _-").strip()
         output_filename = f"{safe_name}.aniga"
         output_path = os.path.join(PROJECTS_DIR, output_filename)
 
-        # Tránh trùng tên
         counter = 1
         while os.path.exists(output_path):
             output_filename = f"{safe_name}_{counter}.aniga"
@@ -155,7 +152,6 @@ def get_project_detail(filename: str):
 
 @app.get("/api/projects/{filename}/pages/{hidden_id}/{layer}")
 def get_page_image(filename: str, hidden_id: str, layer: str):
-    """Trả về ảnh PNG của 1 page (raw/clean/mask)."""
     if layer not in ("raw", "clean", "mask"):
         raise HTTPException(400, "Layer phải là raw, clean, hoặc mask")
 
@@ -164,7 +160,6 @@ def get_page_image(filename: str, hidden_id: str, layer: str):
     if data is None:
         raise HTTPException(404, f"Không tìm thấy {layer} cho page {hidden_id}")
 
-    import io
     return StreamingResponse(io.BytesIO(data), media_type="image/png")
 
 
@@ -209,6 +204,17 @@ def delete_page(filename: str, hidden_id: str):
     fpath = _get_project_path(filename)
     manifest = cm.remove_page_from_bundle(fpath, hidden_id)
     return {"status": "ok", "page_count": len(manifest["pages"])}
+
+
+# ============================================================
+# API: Xóa dự án
+# ============================================================
+
+@app.delete("/api/projects/{filename}")
+def delete_project(filename: str):
+    fpath = _get_project_path(filename)
+    os.remove(fpath)
+    return {"status": "ok"}
 
 
 # ============================================================
@@ -274,8 +280,6 @@ async def update_imgcraft_config(filename: str, request: Request):
     imgcraft_config["flux_size"] = flux_size
     manifest["imgcraft_config"] = imgcraft_config
 
-    # Ghi lại manifest vào bundle
-    import zipfile
     with zipfile.ZipFile(fpath, 'r') as zf:
         existing_files = {}
         for name in zf.namelist():
@@ -299,7 +303,6 @@ async def update_imgcraft_config(filename: str, request: Request):
 async def update_project(filename: str, update_file: UploadFile = File(...)):
     fpath = _get_project_path(filename)
 
-    # Lưu file update tạm
     tmp_path = os.path.join(PROJECTS_DIR, f"_update_{uuid.uuid4().hex[:8]}.aniga")
     try:
         with open(tmp_path, 'wb') as out:
@@ -315,23 +318,25 @@ async def update_project(filename: str, update_file: UploadFile = File(...)):
 
 
 # ============================================================
-# API: Xuất sản phẩm (resolve)
+# API: Xuất sản phẩm (resolve) — Đa dạng
 # ============================================================
 
 @app.get("/api/projects/{filename}/resolve")
-def resolve_project(filename: str):
-    """Xuất sản phẩm: .aniga → ZIP download."""
+def resolve_project(filename: str, layers: str = "raw,clean,mask,detections"):
+    """Xuất sản phẩm: .aniga → ZIP download.
+    Tham số layers: raw,clean,mask,detections (phân tách dấu phẩy)
+    """
     fpath = _get_project_path(filename)
     manifest = cm.read_manifest(fpath)
     safe_name = manifest["project_name"].replace(" ", "_")
 
-    # Tạo thư mục tạm → resolve → zip → stream
+    include_layers = [l.strip() for l in layers.split(",") if l.strip()]
+
     tmp_dir = tempfile.mkdtemp()
     try:
         resolve_dir = os.path.join(tmp_dir, safe_name)
-        cm.resolve_bundle(fpath, resolve_dir)
+        cm.resolve_bundle(fpath, resolve_dir, include_layers=include_layers)
 
-        # Tạo ZIP
         zip_path = os.path.join(tmp_dir, f"{safe_name}.zip")
         shutil.make_archive(os.path.join(tmp_dir, safe_name), 'zip', resolve_dir)
 
@@ -365,79 +370,116 @@ HTML_CONTENT = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aniga Project Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #0f0f14; --bg2: #1a1a24; --bg3: #252535;
-            --text: #e0e0ef; --text2: #8888aa;
-            --accent: #7c6ff7; --accent2: #5a4fd4;
-            --green: #4caf50; --red: #e74c3c; --yellow: #f39c12;
-            --border: #2a2a3a; --radius: 10px;
+            --bg: #0c0c12; --bg2: #14141f; --bg3: #1e1e2e; --bg4: #282840;
+            --text: #e4e4f0; --text2: #7a7a9e; --text3: #52526e;
+            --accent: #7c6ff7; --accent2: #5f52e0; --accent-glow: rgba(124,111,247,0.15);
+            --green: #34d399; --red: #f87171; --yellow: #fbbf24; --blue: #60a5fa;
+            --border: #2a2a40; --radius: 12px;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
 
-        .topbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-        .topbar h1 { font-size: 20px; font-weight: 700; }
-        .topbar .back-btn { cursor: pointer; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; font-size: 13px; display: none; }
-        .topbar .back-btn:hover { border-color: var(--accent); }
+        /* ── TOPBAR ── */
+        .topbar { background:linear-gradient(180deg,var(--bg2),var(--bg)); border-bottom:1px solid var(--border); padding:14px 28px; display:flex; align-items:center; gap:14px; position:sticky; top:0; z-index:50; backdrop-filter:blur(12px); }
+        .topbar h1 { font-size:17px; font-weight:700; letter-spacing:-0.3px; }
+        .back-btn { cursor:pointer; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 14px; border-radius:8px; font-size:12px; display:none; transition:all .2s; }
+        .back-btn:hover { border-color:var(--accent); background:var(--accent-glow); }
 
-        .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+        .container { max-width:1200px; margin:0 auto; padding:24px; }
 
-        /* HOME */
-        .home-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .btn-create { background: var(--accent); color: #fff; border: none; padding: 10px 20px; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 14px; }
-        .btn-create:hover { background: var(--accent2); }
+        /* ── HOME ── */
+        .home-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+        .home-header h2 { font-size:15px; color:var(--text2); font-weight:500; }
+        .btn-create { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; border:none; padding:10px 22px; border-radius:10px; cursor:pointer; font-weight:600; font-size:13px; transition:all .2s; box-shadow:0 4px 20px var(--accent-glow); }
+        .btn-create:hover { transform:translateY(-1px); box-shadow:0 6px 28px rgba(124,111,247,0.25); }
 
-        .project-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; cursor: pointer; transition: border-color 0.2s; }
-        .project-card:hover { border-color: var(--accent); }
-        .project-card .name { font-size: 16px; font-weight: 600; }
-        .project-card .meta { color: var(--text2); font-size: 13px; margin-top: 6px; display: flex; gap: 16px; flex-wrap: wrap; }
-        .project-card .id-tag { background: var(--bg3); padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+        .project-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:16px 20px; margin-bottom:10px; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:16px; }
+        .project-card:hover { border-color:var(--accent); background:var(--bg3); transform:translateX(4px); }
+        .project-card .icon { font-size:28px; }
+        .project-card .info { flex:1; }
+        .project-card .name { font-size:15px; font-weight:600; }
+        .project-card .meta { color:var(--text2); font-size:12px; margin-top:4px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+        .id-tag { background:var(--bg4); padding:2px 8px; border-radius:5px; font-family:'Courier New',monospace; font-size:11px; color:var(--text2); }
+        .project-card .del-btn { background:none; border:none; color:var(--text3); font-size:18px; cursor:pointer; padding:4px 8px; border-radius:6px; transition:all .2s; }
+        .project-card .del-btn:hover { color:var(--red); background:rgba(248,113,113,0.1); }
 
-        /* DETAIL */
-        .detail-header { margin-bottom: 20px; }
-        .detail-header h2 { font-size: 22px; margin-bottom: 6px; }
-        .detail-header .meta { color: var(--text2); font-size: 13px; }
-        .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
-        .detail-actions button { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-        .detail-actions button:hover { border-color: var(--accent); color: var(--accent); }
+        /* ── DETAIL ── */
+        .detail-layout { display:grid; grid-template-columns:280px 1fr; gap:24px; }
+        @media (max-width:768px) { .detail-layout { grid-template-columns:1fr; } }
 
-        .pages-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
-        .page-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
-        .page-card:hover { border-color: var(--accent); }
-        .page-card .page-name { font-size: 13px; font-weight: 600; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .page-card .thumb { width: 100%; aspect-ratio: 1; background: var(--bg3); border-radius: 4px; margin-bottom: 6px; overflow: hidden; }
-        .page-card .thumb img { width: 100%; height: 100%; object-fit: contain; }
-        .page-card .status { font-size: 11px; display: flex; gap: 6px; justify-content: center; }
-        .page-card .status span { padding: 1px 5px; border-radius: 3px; }
-        .s-done { background: #1b5e20; color: #a5d6a7; }
-        .s-pending { background: var(--bg3); color: var(--text2); }
-        .s-error { background: #b71c1c; color: #ef9a9a; }
+        .sidebar { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:20px; height:fit-content; position:sticky; top:80px; }
+        .sidebar h2 { font-size:16px; font-weight:700; margin-bottom:4px; word-break:break-word; }
+        .sidebar .meta-line { font-size:12px; color:var(--text2); margin-bottom:16px; }
 
-        /* MODAL */
-        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 100; }
-        .modal-overlay.active { display: flex; }
-        .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; min-width: 400px; max-width: 90vw; max-height: 90vh; overflow-y: auto; }
-        .modal h3 { margin-bottom: 16px; }
-        .modal input[type="text"], .modal input[type="file"] { width: 100%; padding: 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); margin-bottom: 12px; font-size: 14px; }
-        .modal .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-        .modal .btn-row button { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; }
-        .modal .btn-primary { background: var(--accent); color: #fff; }
-        .modal .btn-cancel { background: var(--bg3); color: var(--text); border: 1px solid var(--border) !important; }
+        .sidebar-section { margin-bottom:16px; }
+        .sidebar-section h4 { font-size:11px; text-transform:uppercase; color:var(--text3); letter-spacing:1px; margin-bottom:8px; }
+        .sidebar-btn { display:block; width:100%; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:9px 14px; border-radius:8px; cursor:pointer; font-size:12px; text-align:left; margin-bottom:6px; transition:all .2s; }
+        .sidebar-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+        .sidebar-select { width:100%; background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:8px; font-size:12px; cursor:pointer; margin-bottom:6px; }
 
-        /* PREVIEW MODAL */
-        .preview-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-        .preview-tabs button { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-        .preview-tabs button.active { border-color: var(--accent); color: var(--accent); }
-        .preview-img { width: 100%; max-width: 600px; aspect-ratio: 1; background: var(--bg); border-radius: 8px; display: flex; justify-content: center; align-items: center; overflow: hidden; }
-        .preview-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .preview-img .no-data { color: var(--text2); font-size: 14px; }
+        .content-area { min-height:400px; }
+        .pages-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:10px; }
+        .page-card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:8px; text-align:center; cursor:pointer; transition:all .2s; }
+        .page-card:hover { border-color:var(--accent); transform:translateY(-2px); box-shadow:0 4px 16px rgba(0,0,0,0.3); }
+        .page-card .thumb { width:100%; aspect-ratio:0.7; background:var(--bg); border-radius:6px; margin-bottom:6px; overflow:hidden; position:relative; }
+        .page-card .thumb img { width:100%; height:100%; object-fit:cover; }
+        .page-card .page-name { font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .page-card .status { font-size:10px; display:flex; gap:4px; justify-content:center; margin-top:4px; }
+        .page-card .status span { padding:1px 5px; border-radius:3px; font-weight:600; }
+        .s-done { background:rgba(52,211,153,0.15); color:var(--green); }
+        .s-pending { background:var(--bg4); color:var(--text3); }
 
-        /* TOAST */
-        .toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg2); border: 1px solid var(--accent); color: var(--text); padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 200; display: none; animation: fadeIn 0.3s; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        /* ── MODAL ── */
+        .modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.75); display:none; justify-content:center; align-items:center; z-index:100; backdrop-filter:blur(4px); }
+        .modal-overlay.active { display:flex; }
+        .modal { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:28px; min-width:420px; max-width:90vw; max-height:90vh; overflow-y:auto; box-shadow:0 24px 64px rgba(0,0,0,0.5); }
+        .modal h3 { margin-bottom:16px; font-size:16px; }
+        .modal input[type="text"],.modal input[type="file"] { width:100%; padding:10px 14px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; color:var(--text); margin-bottom:12px; font-size:13px; }
+        .modal .btn-row { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+        .modal .btn-row button { padding:8px 18px; border-radius:8px; border:none; cursor:pointer; font-size:13px; font-weight:600; transition:all .2s; }
+        .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
+        .btn-cancel { background:var(--bg3); color:var(--text); border:1px solid var(--border)!important; }
+        .btn-danger { background:rgba(248,113,113,0.1); color:var(--red); border:1px solid rgba(248,113,113,0.3)!important; }
 
-        .loading { text-align: center; padding: 40px; color: var(--text2); }
+        /* ── PREVIEW MODAL (đặc biệt to) ── */
+        .preview-modal .modal { min-width:80vw; max-width:95vw; min-height:70vh; display:flex; flex-direction:column; }
+        .preview-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+        .preview-header h3 { margin:0; }
+        .preview-nav { display:flex; gap:6px; }
+        .preview-nav button { background:var(--bg3); border:1px solid var(--border); color:var(--text2); width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:16px; transition:all .2s; }
+        .preview-nav button:hover { border-color:var(--accent); color:var(--accent); }
+
+        .preview-tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+        .preview-tabs button { background:var(--bg3); border:1px solid var(--border); color:var(--text2); padding:7px 16px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:600; transition:all .2s; }
+        .preview-tabs button.active { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+        .preview-tabs button:hover { border-color:var(--accent); }
+
+        .preview-body { flex:1; display:flex; gap:16px; min-height:0; }
+        .preview-img-wrap { flex:1; background:var(--bg); border-radius:10px; display:flex; justify-content:center; align-items:center; overflow:hidden; position:relative; min-height:500px; }
+        .preview-img-wrap img { max-width:100%; max-height:70vh; object-fit:contain; }
+        .preview-img-wrap .no-data { color:var(--text3); font-size:14px; }
+
+        /* Canvas cho BBox overlay */
+        .preview-img-wrap canvas { max-width:100%; max-height:70vh; cursor:crosshair; }
+
+        /* JSON panel bên phải */
+        .json-panel { width:320px; background:var(--bg3); border-radius:10px; padding:14px; overflow-y:auto; max-height:70vh; font-size:12px; font-family:'Courier New',monospace; color:var(--text2); white-space:pre-wrap; word-break:break-all; }
+
+        .preview-actions { display:flex; gap:8px; margin-top:12px; justify-content:space-between; }
+        .preview-actions .left { display:flex; gap:6px; }
+
+        /* ── TOAST ── */
+        .toast { position:fixed; bottom:24px; right:24px; background:var(--bg2); border:1px solid var(--accent); color:var(--text); padding:12px 22px; border-radius:10px; font-size:13px; z-index:200; display:none; animation:slideIn .3s; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+        @keyframes slideIn { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+
+        .loading { text-align:center; padding:40px; color:var(--text3); }
+
+        /* ── Export Modal ── */
+        .export-cb { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px; cursor:pointer; }
+        .export-cb input { accent-color:var(--accent); }
     </style>
 </head>
 <body>
@@ -449,33 +491,46 @@ HTML_CONTENT = """<!DOCTYPE html>
     <div class="container">
         <div id="homePage">
             <div class="home-header">
-                <h2 style="font-size:18px; color:var(--text2);">Danh sách dự án</h2>
+                <h2>Danh sách dự án</h2>
                 <button class="btn-create" onclick="showCreateModal()">+ Tạo dự án mới</button>
             </div>
             <div id="projectList"><div class="loading">Đang tải...</div></div>
         </div>
 
         <div id="detailPage" style="display:none;">
-            <div class="detail-header">
-                <h2 id="detailName"></h2>
-                <div class="meta" id="detailMeta"></div>
+            <div class="detail-layout">
+                <div class="sidebar">
+                    <h2 id="sidebarName"></h2>
+                    <div class="meta-line" id="sidebarMeta"></div>
+
+                    <div class="sidebar-section">
+                        <h4>Thao tác</h4>
+                        <button class="sidebar-btn" onclick="showAddPagesModal()">➕ Thêm trang</button>
+                        <button class="sidebar-btn" onclick="showRenameModal()">✏️ Đổi tên</button>
+                        <button class="sidebar-btn" onclick="showUpdateModal()">🔄 Cập nhật từ .aniga</button>
+                    </div>
+
+                    <div class="sidebar-section">
+                        <h4>Xuất / Tải</h4>
+                        <button class="sidebar-btn" onclick="showExportModal()">📤 Xuất sản phẩm (ZIP)</button>
+                        <button class="sidebar-btn" onclick="downloadBundle()">📥 Tải file .aniga</button>
+                    </div>
+
+                    <div class="sidebar-section">
+                        <h4>Cấu hình</h4>
+                        <label style="font-size:12px;color:var(--text2);margin-bottom:4px;display:block;">Flux Size</label>
+                        <select class="sidebar-select" id="fluxSizeSelect" onchange="updateFluxSize(this.value)">
+                            <option value="1024">1024</option>
+                            <option value="1280" selected>1280</option>
+                            <option value="1536">1536</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="content-area">
+                    <div class="pages-grid" id="pagesGrid"></div>
+                </div>
             </div>
-            <div class="detail-actions">
-                <button onclick="showAddPagesModal()">+ Thêm trang</button>
-                <button onclick="showRenameModal()">✏️ Đổi tên</button>
-                <button onclick="showUpdateModal()">🔄 Update từ .aniga</button>
-                <button onclick="resolveProject()">📤 Xuất sản phẩm</button>
-                <button onclick="downloadBundle()">📥 Tải .aniga</button>
-                <span style="margin-left:auto; display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text2);">
-                    Flux Size:
-                    <select id="fluxSizeSelect" onchange="updateFluxSize(this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;">
-                        <option value="1024">1024</option>
-                        <option value="1280" selected>1280</option>
-                        <option value="1536">1536</option>
-                    </select>
-                </span>
-            </div>
-            <div class="pages-grid" id="pagesGrid"></div>
         </div>
     </div>
 
@@ -485,7 +540,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <h3>Tạo dự án mới</h3>
             <input type="text" id="createName" placeholder="Tên dự án (vd: Naruto Ch.001)">
             <input type="file" id="createFiles" multiple accept="image/*">
-            <div id="createStatus" style="color:var(--text2); font-size:13px; margin-bottom:8px;"></div>
+            <div id="createStatus" style="color:var(--text2);font-size:12px;margin-bottom:8px;"></div>
             <div class="btn-row">
                 <button class="btn-cancel" onclick="closeModals()">Hủy</button>
                 <button class="btn-primary" onclick="createProject()">Tạo</button>
@@ -496,13 +551,13 @@ HTML_CONTENT = """<!DOCTYPE html>
     <!-- Update Modal -->
     <div class="modal-overlay" id="updateModal">
         <div class="modal">
-            <h3>🔄 Update từ file .aniga</h3>
-            <p style="color:var(--text2); margin-bottom:12px; font-size:13px;">Chọn file .aniga đã xử lý từ Colab để merge vào dự án gốc.</p>
+            <h3>🔄 Cập nhật từ file .aniga</h3>
+            <p style="color:var(--text2);margin-bottom:12px;font-size:12px;">Chọn file .aniga đã xử lý từ Colab để merge vào dự án gốc.</p>
             <input type="file" id="updateFile" accept=".aniga">
-            <div id="updateStatus" style="color:var(--text2); font-size:13px;"></div>
+            <div id="updateStatus" style="color:var(--text2);font-size:12px;"></div>
             <div class="btn-row">
                 <button class="btn-cancel" onclick="closeModals()">Hủy</button>
-                <button class="btn-primary" onclick="updateProject()">Update</button>
+                <button class="btn-primary" onclick="updateProject()">Cập nhật</button>
             </div>
         </div>
     </div>
@@ -522,7 +577,7 @@ HTML_CONTENT = """<!DOCTYPE html>
     <!-- Add Pages Modal -->
     <div class="modal-overlay" id="addPagesModal">
         <div class="modal">
-            <h3>+ Thêm trang</h3>
+            <h3>➕ Thêm trang</h3>
             <input type="file" id="addPagesFiles" multiple accept="image/*">
             <div class="btn-row">
                 <button class="btn-cancel" onclick="closeModals()">Hủy</button>
@@ -531,16 +586,44 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
     </div>
 
-    <!-- Preview Modal -->
-    <div class="modal-overlay" id="previewModal">
-        <div class="modal" style="min-width:640px;">
-            <h3 id="previewTitle">Preview</h3>
-            <div class="preview-tabs" id="previewTabs"></div>
-            <div class="preview-img" id="previewImg"><span class="no-data">Chọn layer để xem</span></div>
+    <!-- Export Modal -->
+    <div class="modal-overlay" id="exportModal">
+        <div class="modal">
+            <h3>📤 Xuất sản phẩm (ZIP)</h3>
+            <p style="color:var(--text2);margin-bottom:14px;font-size:12px;">Chọn các layers muốn xuất:</p>
+            <label class="export-cb"><input type="checkbox" value="raw" checked> Ảnh Gốc (RAW)</label>
+            <label class="export-cb"><input type="checkbox" value="clean" checked> Ảnh Clean (ImgCraft)</label>
+            <label class="export-cb"><input type="checkbox" value="mask" checked> Mask (Aniga3)</label>
+            <label class="export-cb"><input type="checkbox" value="detections" checked> JSON BBox & OCR</label>
             <div class="btn-row">
-                <button class="btn-cancel" onclick="closeModals()">Đóng</button>
-                <button class="btn-cancel" onclick="resetCurrentPage()" style="color:var(--red);">🔄 Reset trang</button>
-                <button class="btn-cancel" onclick="deleteCurrentPage()" style="color:var(--red);">🗑️ Xóa trang</button>
+                <button class="btn-cancel" onclick="closeModals()">Hủy</button>
+                <button class="btn-primary" onclick="doExport()">Xuất</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal-overlay preview-modal" id="previewModal">
+        <div class="modal">
+            <div class="preview-header">
+                <h3 id="previewTitle">Preview</h3>
+                <div class="preview-nav">
+                    <button onclick="prevPage()" title="Trang trước">◀</button>
+                    <button onclick="nextPage()" title="Trang sau">▶</button>
+                    <button onclick="closeModals()" title="Đóng" style="color:var(--red);">✕</button>
+                </div>
+            </div>
+            <div class="preview-tabs" id="previewTabs"></div>
+            <div class="preview-body">
+                <div class="preview-img-wrap" id="previewImg"><span class="no-data">Chọn tab để xem</span></div>
+                <div class="json-panel" id="jsonPanel" style="display:none;"></div>
+            </div>
+            <div class="preview-actions">
+                <div class="left">
+                    <button class="btn-cancel btn-danger" onclick="resetCurrentPage()">🔄 Reset</button>
+                    <button class="btn-cancel btn-danger" onclick="deleteCurrentPage()">🗑️ Xóa trang</button>
+                </div>
+                <div></div>
             </div>
         </div>
     </div>
@@ -552,12 +635,21 @@ HTML_CONTENT = """<!DOCTYPE html>
     let currentFile = null;
     let currentProject = null;
     let previewPageId = null;
+    let previewPageIndex = -1;
+    let currentDetections = null;
+
+    // Màu cho từng class (giống Aniga3)
+    const CLASS_COLORS = {
+        text:'#00ff00', text2:'#88ff88', sfx:'#ff00ff',
+        b1:'#ff0000', b2:'#0000ff', b3:'#ffff00', b4:'#00ffff', b5:'#ff8800'
+    };
 
     // ── UTILS ──
-    function toast(msg, duration=3000) {
+    function toast(msg, dur=3000) {
         const t = document.getElementById('toast');
         t.textContent = msg; t.style.display = 'block';
-        setTimeout(() => t.style.display = 'none', duration);
+        clearTimeout(t._tid);
+        t._tid = setTimeout(() => t.style.display='none', dur);
     }
     function closeModals() {
         document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
@@ -568,20 +660,32 @@ HTML_CONTENT = """<!DOCTYPE html>
         const res = await fetch('/api/projects');
         const projects = await res.json();
         const el = document.getElementById('projectList');
-        if (!projects.length) { el.innerHTML = '<div class="loading">Chưa có dự án nào. Bấm "Tạo dự án mới" để bắt đầu.</div>'; return; }
+        if (!projects.length) { el.innerHTML = '<div class="loading">Chưa có dự án nào</div>'; return; }
         el.innerHTML = projects.map(p => p.error
-            ? `<div class="project-card"><span class="name">⚠️ ${p.filename}</span><div class="meta">${p.error}</div></div>`
+            ? `<div class="project-card"><div class="icon">⚠️</div><div class="info"><span class="name">${p.filename}</span><div class="meta">${p.error}</div></div></div>`
             : `<div class="project-card" onclick="openProject('${p.filename}')">
-                <span class="name">📁 ${p.project_name}</span>
-                <div class="meta">
-                    <span class="id-tag">${p.project_id}</span>
-                    <span>${p.page_count} trang</span>
-                    <span>Clean: ${p.clean_progress}</span>
-                    <span>Mask: ${p.mask_progress}</span>
+                <div class="icon">📁</div>
+                <div class="info">
+                    <span class="name">${p.project_name}</span>
+                    <div class="meta">
+                        <span class="id-tag">${p.project_id}</span>
+                        <span>${p.page_count} trang</span>
+                        <span style="color:var(--green)">C:${p.clean_progress}</span>
+                        <span style="color:var(--blue)">M:${p.mask_progress}</span>
+                    </div>
                 </div>
+                <button class="del-btn" onclick="event.stopPropagation();deleteProject('${p.filename}')" title="Xóa">🗑️</button>
                </div>`
         ).join('');
     }
+
+    async function deleteProject(fn) {
+        if (!confirm('Xóa dự án này? Không thể hoàn tác!')) return;
+        await fetch('/api/projects/'+fn, {method:'DELETE'});
+        loadProjects();
+        toast('✅ Đã xóa dự án');
+    }
+
     function goHome() {
         document.getElementById('homePage').style.display = '';
         document.getElementById('detailPage').style.display = 'none';
@@ -593,73 +697,235 @@ HTML_CONTENT = """<!DOCTYPE html>
     // ── DETAIL ──
     async function openProject(filename) {
         currentFile = filename;
-        const res = await fetch(`/api/projects/${filename}`);
+        const res = await fetch('/api/projects/'+filename);
         currentProject = await res.json();
         renderDetail();
         document.getElementById('homePage').style.display = 'none';
         document.getElementById('detailPage').style.display = '';
         document.getElementById('backBtn').style.display = '';
     }
+
     function renderDetail() {
         const p = currentProject;
-        document.getElementById('detailName').textContent = `📁 ${p.project_name}`;
-        document.getElementById('detailMeta').innerHTML = `<span class="id-tag" style="background:var(--bg3);padding:2px 8px;border-radius:4px;font-family:monospace;">${p.project_id}</span> &nbsp; ${p.page_count} trang`;
-        // Set flux_size dropdown
+        document.getElementById('sidebarName').textContent = p.project_name;
+        document.getElementById('sidebarMeta').innerHTML = `<span class="id-tag">${p.project_id}</span> &nbsp; ${p.page_count} trang`;
         const fluxSize = (p.imgcraft_config && p.imgcraft_config.flux_size) || 1280;
-        const sel = document.getElementById('fluxSizeSelect');
-        if (sel) sel.value = fluxSize;
+        document.getElementById('fluxSizeSelect').value = fluxSize;
+
         const grid = document.getElementById('pagesGrid');
-        grid.innerHTML = p.pages.map(pg => {
+        grid.innerHTML = p.pages.map((pg, idx) => {
             const dn = pg.display_name.split('_').pop();
-            const cs = pg.has_clean ? 's-done' : 's-pending';
-            const ms = pg.has_mask ? 's-done' : 's-pending';
-            const ds = pg.has_detections ? 's-done' : 's-pending';
-            const es = pg.error ? 's-error' : '';
-            return `<div class="page-card ${es}" onclick="showPreview('${pg.hidden_id}','${pg.display_name}', ${pg.has_clean}, ${pg.has_mask})">
+            return `<div class="page-card" onclick="showPreview(${idx})">
                 <div class="thumb"><img src="/api/projects/${currentFile}/pages/${pg.hidden_id}/raw" loading="lazy" onerror="this.style.display='none'"></div>
                 <div class="page-name">${dn}</div>
                 <div class="status">
-                    <span class="${cs}">C</span>
-                    <span class="${ms}">M</span>
-                    <span class="${ds}">D</span>
+                    <span class="${pg.has_clean?'s-done':'s-pending'}">C</span>
+                    <span class="${pg.has_mask?'s-done':'s-pending'}">M</span>
+                    <span class="${pg.has_detections?'s-done':'s-pending'}">D</span>
                 </div>
-                ${pg.error ? '<div style="font-size:10px;color:var(--red);margin-top:4px;">⚠️</div>' : ''}
             </div>`;
         }).join('');
     }
 
     // ── PREVIEW ──
-    function showPreview(hiddenId, displayName, hasClean, hasMask) {
-        previewPageId = hiddenId;
-        document.getElementById('previewTitle').textContent = displayName;
-        const tabs = document.getElementById('previewTabs');
-        const layers = ['raw'];
-        if (hasClean) layers.push('clean');
-        if (hasMask) layers.push('mask');
-        tabs.innerHTML = layers.map((l,i) =>
-            `<button class="${i===0?'active':''}" onclick="switchPreview('${hiddenId}','${l}',this)">${l.toUpperCase()}</button>`
+    function showPreview(idx) {
+        previewPageIndex = idx;
+        const pg = currentProject.pages[idx];
+        previewPageId = pg.hidden_id;
+        currentDetections = null;
+
+        document.getElementById('previewTitle').textContent = pg.display_name;
+
+        // Tạo tabs
+        const tabs = ['RAW'];
+        if (pg.has_clean) tabs.push('CLEAN');
+        if (pg.has_mask) tabs.push('MASK');
+        if (pg.has_clean && pg.has_mask) tabs.push('CLEAN+MASK');
+        if (pg.has_detections) tabs.push('BBOX');
+        if (pg.has_detections) tabs.push('JSON');
+
+        document.getElementById('previewTabs').innerHTML = tabs.map((t,i) =>
+            `<button class="${i===0?'active':''}" onclick="switchTab('${t}',this)">${t}</button>`
         ).join('');
-        switchPreview(hiddenId, 'raw', tabs.firstChild);
+
+        switchTab('RAW', document.querySelector('#previewTabs button'));
         document.getElementById('previewModal').classList.add('active');
     }
-    function switchPreview(hiddenId, layer, btn) {
-        document.querySelectorAll('#previewTabs button').forEach(b => b.classList.remove('active'));
-        if(btn) btn.classList.add('active');
-        const imgDiv = document.getElementById('previewImg');
-        imgDiv.innerHTML = `<img src="/api/projects/${currentFile}/pages/${hiddenId}/${layer}" onerror="this.outerHTML='<span class=\\'no-data\\'>Không có dữ liệu</span>'">`;
+
+    function prevPage() {
+        if (previewPageIndex > 0) showPreview(previewPageIndex - 1);
     }
+    function nextPage() {
+        if (previewPageIndex < currentProject.pages.length - 1) showPreview(previewPageIndex + 1);
+    }
+
+    async function switchTab(tab, btn) {
+        document.querySelectorAll('#previewTabs button').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+
+        const imgDiv = document.getElementById('previewImg');
+        const jsonPanel = document.getElementById('jsonPanel');
+        jsonPanel.style.display = 'none';
+
+        if (tab === 'RAW' || tab === 'CLEAN' || tab === 'MASK') {
+            const layer = tab.toLowerCase();
+            imgDiv.innerHTML = `<img src="/api/projects/${currentFile}/pages/${previewPageId}/${layer}" onerror="this.outerHTML='<span class=\\'no-data\\'>Không có dữ liệu</span>'">`;
+        }
+        else if (tab === 'CLEAN+MASK') {
+            // Hiển thị ảnh clean overlay trên raw theo mask (client-side)
+            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
+            try {
+                const [rawImg, cleanImg, maskImg] = await Promise.all([
+                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/raw`),
+                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/clean`),
+                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/mask`),
+                ]);
+                const w = rawImg.width, h = rawImg.height;
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext('2d');
+
+                // Vẽ raw
+                ctx.drawImage(rawImg, 0, 0);
+                const rawData = ctx.getImageData(0, 0, w, h);
+
+                // Vẽ clean
+                ctx.drawImage(cleanImg, 0, 0, w, h);
+                const cleanData = ctx.getImageData(0, 0, w, h);
+
+                // Vẽ mask
+                ctx.drawImage(maskImg, 0, 0, w, h);
+                const maskData = ctx.getImageData(0, 0, w, h);
+
+                // Blend: result = raw * (1 - mask) + clean * mask
+                const out = ctx.createImageData(w, h);
+                for (let i = 0; i < rawData.data.length; i += 4) {
+                    const m = maskData.data[i] / 255;
+                    out.data[i]   = rawData.data[i]   * (1 - m) + cleanData.data[i]   * m;
+                    out.data[i+1] = rawData.data[i+1] * (1 - m) + cleanData.data[i+1] * m;
+                    out.data[i+2] = rawData.data[i+2] * (1 - m) + cleanData.data[i+2] * m;
+                    out.data[i+3] = 255;
+                }
+                ctx.putImageData(out, 0, 0);
+                imgDiv.innerHTML = '';
+                imgDiv.appendChild(canvas);
+            } catch(e) {
+                imgDiv.innerHTML = '<span class="no-data">Lỗi khi tạo ảnh blend</span>';
+            }
+        }
+        else if (tab === 'BBOX') {
+            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
+            try {
+                const [rawImg, dets] = await Promise.all([
+                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/raw`),
+                    fetchDetections(),
+                ]);
+                const boxes = dets.boxes || [];
+                const w = rawImg.width, h = rawImg.height;
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(rawImg, 0, 0);
+
+                // Vẽ bbox
+                for (const item of boxes) {
+                    const [x1,y1,x2,y2] = item.bbox;
+                    const cls = item.class;
+                    const color = CLASS_COLORS[cls] || '#ffffff';
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x1, y1, x2-x1, y2-y1);
+
+                    // Label nhỏ phía trên
+                    const label = `${cls} ${(item.confidence*100).toFixed(0)}%`;
+                    ctx.font = 'bold 14px Inter, sans-serif';
+                    const tw = ctx.measureText(label).width;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x1, y1-20, tw+8, 20);
+                    ctx.fillStyle = '#000';
+                    ctx.fillText(label, x1+4, y1-5);
+                }
+
+                imgDiv.innerHTML = '';
+                imgDiv.appendChild(canvas);
+
+                // Hover tooltip cho OCR text
+                canvas.onmousemove = (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = w / rect.width;
+                    const scaleY = h / rect.height;
+                    const mx = (e.clientX - rect.left) * scaleX;
+                    const my = (e.clientY - rect.top) * scaleY;
+
+                    let found = null;
+                    for (const item of boxes) {
+                        const [x1,y1,x2,y2] = item.bbox;
+                        if (mx >= x1 && mx <= x2 && my >= y1 && my <= y2) {
+                            found = item; break;
+                        }
+                    }
+                    if (found && found.ocr_text) {
+                        canvas.title = `[${found.class}] ${found.ocr_text}`;
+                        canvas.style.cursor = 'pointer';
+                    } else {
+                        canvas.title = '';
+                        canvas.style.cursor = 'crosshair';
+                    }
+                };
+            } catch(e) {
+                imgDiv.innerHTML = '<span class="no-data">Lỗi khi vẽ BBox</span>';
+            }
+        }
+        else if (tab === 'JSON') {
+            imgDiv.innerHTML = '<span class="no-data">Xem bên phải →</span>';
+            jsonPanel.style.display = '';
+            try {
+                const dets = await fetchDetections();
+                jsonPanel.textContent = JSON.stringify(dets, null, 2);
+            } catch(e) {
+                jsonPanel.textContent = 'Lỗi khi tải detections';
+            }
+        }
+    }
+
+    function loadImage(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = url;
+        });
+    }
+
+    async function fetchDetections() {
+        if (currentDetections) return currentDetections;
+        const res = await fetch(`/api/projects/${currentFile}/pages/${previewPageId}/detections`);
+        if (!res.ok) throw new Error('No detections');
+        currentDetections = await res.json();
+        return currentDetections;
+    }
+
     async function deleteCurrentPage() {
-        if (!confirm('Xóa trang này? Không thể hoàn tác!')) return;
+        if (!confirm('Xóa trang này?')) return;
         await fetch(`/api/projects/${currentFile}/pages/${previewPageId}`, {method:'DELETE'});
         closeModals(); openProject(currentFile);
         toast('✅ Đã xóa trang');
     }
     async function resetCurrentPage() {
-        if (!confirm('Reset trang này? Sẽ xóa clean/mask/detections.')) return;
+        if (!confirm('Reset clean/mask/detections?')) return;
         await fetch(`/api/projects/${currentFile}/pages/${previewPageId}/reset`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({layers:['clean','mask','detections']})});
         closeModals(); openProject(currentFile);
         toast('✅ Đã reset trang');
     }
+
+    // ── Keyboard nav ──
+    document.addEventListener('keydown', (e) => {
+        if (!document.getElementById('previewModal').classList.contains('active')) return;
+        if (e.key === 'ArrowLeft') prevPage();
+        else if (e.key === 'ArrowRight') nextPage();
+        else if (e.key === 'Escape') closeModals();
+    });
 
     // ── CREATE ──
     function showCreateModal() {
@@ -671,8 +937,8 @@ HTML_CONTENT = """<!DOCTYPE html>
     async function createProject() {
         const name = document.getElementById('createName').value.trim();
         const files = document.getElementById('createFiles').files;
-        if (!name) { toast('⚠️ Nhập tên dự án!'); return; }
-        if (!files.length) { toast('⚠️ Chọn ít nhất 1 ảnh!'); return; }
+        if (!name) { toast('⚠️ Nhập tên!'); return; }
+        if (!files.length) { toast('⚠️ Chọn ảnh!'); return; }
         document.getElementById('createStatus').textContent = `Đang tạo... (${files.length} ảnh)`;
         const fd = new FormData();
         fd.append('project_name', name);
@@ -727,19 +993,28 @@ HTML_CONTENT = """<!DOCTYPE html>
         else toast(`✅ Đã sync ${data.synced} trang`);
     }
 
-    // ── FLUX SIZE CONFIG ──
-    async function updateFluxSize(val) {
-        const res = await fetch(`/api/projects/${currentFile}/imgcraft-config`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({flux_size: parseInt(val)})
-        });
-        if (res.ok) toast(`✅ Flux Size → ${val}`);
-        else toast('❌ Lỗi cập nhật Flux Size');
+    // ── EXPORT ──
+    function showExportModal() { document.getElementById('exportModal').classList.add('active'); }
+    function doExport() {
+        const checks = document.querySelectorAll('#exportModal .export-cb input:checked');
+        const layers = Array.from(checks).map(c => c.value).join(',');
+        if (!layers) { toast('⚠️ Chọn ít nhất 1 layer!'); return; }
+        window.location.href = `/api/projects/${currentFile}/resolve?layers=${layers}`;
+        closeModals();
+        toast('📤 Đang xuất...');
     }
 
-    // ── RESOLVE / DOWNLOAD ──
-    function resolveProject() { window.location.href = `/api/projects/${currentFile}/resolve`; }
+    // ── FLUX SIZE ──
+    async function updateFluxSize(val) {
+        const res = await fetch(`/api/projects/${currentFile}/imgcraft-config`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({flux_size:parseInt(val)})
+        });
+        if (res.ok) toast(`✅ Flux Size → ${val}`);
+        else toast('❌ Lỗi cập nhật');
+    }
+
+    // ── DOWNLOAD ──
     function downloadBundle() { window.location.href = `/api/projects/${currentFile}/download`; }
 
     // ── INIT ──
