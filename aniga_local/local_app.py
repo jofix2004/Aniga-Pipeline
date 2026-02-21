@@ -330,6 +330,11 @@ async def update_project(filename: str, update_file: UploadFile = File(...)):
             out.write(content)
 
         result = cm.merge_bundles(fpath, tmp_path, delete_update=True)
+        # Clear server cache cho file này
+        keys_to_del = [k for k in _image_cache if k.startswith(fpath + ":")]
+        for k in keys_to_del:
+            _image_cache.pop(k, None)
+        result["cache_bust"] = True
         return result
     except Exception as e:
         if os.path.exists(tmp_path):
@@ -1071,6 +1076,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         fd.append('update_file', file);
         const res = await fetch(`/api/projects/${currentFile}/update`, {method:'POST', body:fd});
         const data = await res.json();
+        // Clear client cache để force reload ảnh mới
+        if (data.cache_bust) {
+            for (const key in imageCache) delete imageCache[key];
+        }
         closeModals(); openProject(currentFile);
         if (data.errors?.length) toast(`⚠️ ${data.errors.join(', ')}`, 5000);
         else toast(`✅ Đã sync ${data.synced} trang`);
