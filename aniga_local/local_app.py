@@ -143,6 +143,7 @@ def get_project_detail(filename: str):
         "project_name": manifest["project_name"],
         "page_count": len(manifest["pages"]),
         "pages": pages_info,
+        "imgcraft_config": manifest.get("imgcraft_config", {"flux_size": 1280}),
         "aniga3_config": manifest.get("aniga3_config"),
         "updated_at": manifest.get("updated_at", ""),
     }
@@ -253,6 +254,41 @@ async def reset_page(filename: str, hidden_id: str, request: Request):
     fpath = _get_project_path(filename)
     manifest = cm.reset_page(fpath, hidden_id, layers)
     return {"status": "ok"}
+
+
+# ============================================================
+# API: Cập nhật imgcraft_config
+# ============================================================
+
+@app.post("/api/projects/{filename}/imgcraft-config")
+async def update_imgcraft_config(filename: str, request: Request):
+    body = await request.json()
+    flux_size = body.get("flux_size", 1280)
+    if flux_size not in (1024, 1280, 1536):
+        raise HTTPException(400, "flux_size phải là 1024, 1280, hoặc 1536")
+
+    fpath = _get_project_path(filename)
+    manifest = cm.read_manifest(fpath)
+
+    imgcraft_config = manifest.get("imgcraft_config", {})
+    imgcraft_config["flux_size"] = flux_size
+    manifest["imgcraft_config"] = imgcraft_config
+
+    # Ghi lại manifest vào bundle
+    import zipfile
+    with zipfile.ZipFile(fpath, 'r') as zf:
+        existing_files = {}
+        for name in zf.namelist():
+            existing_files[name] = zf.read(name)
+
+    manifest["updated_at"] = datetime.now().isoformat(timespec='seconds')
+    existing_files["manifest.json"] = json.dumps(manifest, indent=2, ensure_ascii=False).encode('utf-8')
+
+    with zipfile.ZipFile(fpath, 'w', compression=zipfile.ZIP_STORED) as zf:
+        for name, data in existing_files.items():
+            zf.writestr(name, data)
+
+    return {"status": "ok", "imgcraft_config": imgcraft_config}
 
 
 # ============================================================
@@ -430,6 +466,14 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <button onclick="showUpdateModal()">🔄 Update từ .aniga</button>
                 <button onclick="resolveProject()">📤 Xuất sản phẩm</button>
                 <button onclick="downloadBundle()">📥 Tải .aniga</button>
+                <span style="margin-left:auto; display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text2);">
+                    Flux Size:
+                    <select id="fluxSizeSelect" onchange="updateFluxSize(this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;">
+                        <option value="1024">1024</option>
+                        <option value="1280" selected>1280</option>
+                        <option value="1536">1536</option>
+                    </select>
+                </span>
             </div>
             <div class="pages-grid" id="pagesGrid"></div>
         </div>
@@ -560,6 +604,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         const p = currentProject;
         document.getElementById('detailName').textContent = `📁 ${p.project_name}`;
         document.getElementById('detailMeta').innerHTML = `<span class="id-tag" style="background:var(--bg3);padding:2px 8px;border-radius:4px;font-family:monospace;">${p.project_id}</span> &nbsp; ${p.page_count} trang`;
+        // Set flux_size dropdown
+        const fluxSize = (p.imgcraft_config && p.imgcraft_config.flux_size) || 1280;
+        const sel = document.getElementById('fluxSizeSelect');
+        if (sel) sel.value = fluxSize;
         const grid = document.getElementById('pagesGrid');
         grid.innerHTML = p.pages.map(pg => {
             const dn = pg.display_name.split('_').pop();
@@ -677,6 +725,17 @@ HTML_CONTENT = """<!DOCTYPE html>
         closeModals(); openProject(currentFile);
         if (data.errors?.length) toast(`⚠️ ${data.errors.join(', ')}`, 5000);
         else toast(`✅ Đã sync ${data.synced} trang`);
+    }
+
+    // ── FLUX SIZE CONFIG ──
+    async function updateFluxSize(val) {
+        const res = await fetch(`/api/projects/${currentFile}/imgcraft-config`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({flux_size: parseInt(val)})
+        });
+        if (res.ok) toast(`✅ Flux Size → ${val}`);
+        else toast('❌ Lỗi cập nhật Flux Size');
     }
 
     // ── RESOLVE / DOWNLOAD ──

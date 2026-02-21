@@ -105,8 +105,12 @@ def _worker_loop():
             from PIL import Image
             raw_img = Image.open(raw_path)
 
+            # Đọc flux_size từ manifest config
+            imgcraft_config = manifest.get("imgcraft_config", {})
+            flux_size = imgcraft_config.get("flux_size", 1280)
+
             # Gọi core FluxProcessor
-            clean_img = _process_single_page(raw_img)
+            clean_img = _process_single_page(raw_img, flux_size=flux_size)
 
             # Transactional save
             cm.save_page_to_dir(item["working_dir"], hidden_id, "clean", clean_img)
@@ -127,9 +131,10 @@ def _worker_loop():
     state.current_page = None
 
 
-def _process_single_page(raw_pil):
+def _process_single_page(raw_pil, flux_size=1280):
     """
     Xử lý 1 trang raw → clean sử dụng core algorithm.
+    flux_size: kích thước resize tile trước khi đưa vào Flux (1024/1280/1536)
     """
     if state.flux_processor is None:
         raise Exception("FluxProcessor chưa được init. Chạy cell khởi tạo trên notebook trước.")
@@ -152,8 +157,8 @@ def _process_single_page(raw_pil):
         for (x, y) in coords:
             box = (x, y, x + size, y + size)
             cropped_tile = master_img_pil.crop(box)
-            # V2 Pipeline Standard: Resize lên 1280x1280 trước khi cho vào Flux
-            tiles_pil.append(cropped_tile.resize((1280, 1280), imgcraft_core.Image.Resampling.LANCZOS))
+            # Resize tile lên flux_size x flux_size trước khi cho vào Flux
+            tiles_pil.append(cropped_tile.resize((flux_size, flux_size), imgcraft_core.Image.Resampling.LANCZOS))
 
         # 3. Clean bằng FluxProcessor (GPU)
         clean_tiles_pil = state.flux_processor.process(tiles_pil)

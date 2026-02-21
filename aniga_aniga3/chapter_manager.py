@@ -92,6 +92,9 @@ def create_bundle(image_paths, chapter_name, output_path):
             "created_at": now,
             "updated_at": now,
             "pages": pages,
+            "imgcraft_config": {
+                "flux_size": 1280
+            },
             "aniga3_config": None
         }
         zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))

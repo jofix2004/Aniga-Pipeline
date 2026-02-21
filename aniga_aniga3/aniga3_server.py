@@ -36,14 +36,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Default Aniga3 config
 DEFAULT_CONFIG = {
-    "mask_classes": ["text", "sfx", "b1"],
+    "mask_classes": ["text", "b1", "b2", "b3", "b4", "b5"],
     "expand": 31,
     "feather": 21,
-    "blur": 10,
+    "blur": 5,
     "min_area": 100,
     "cleanup": 7,
     "overlap_threshold": 0.1,
-    "confidence_threshold": 0.25,
+    "confidence_threshold": 0.05,
     "ocr_mode": "Không bật",
 }
 
@@ -546,16 +546,26 @@ HTML = """<!DOCTYPE html>
 
             // Config panel
             const c=q.config;
+            const allClasses=['text','text2','b1','b2','b3','b4','b5'];
+            const classCheckboxes=allClasses.map(cls=>`<span class="cb"><input type="checkbox" ${c.mask_classes.includes(cls)?'checked':''} onchange="toggleClass('${q.id}','${cls}',this.checked)">${cls}</span>`).join('');
+            const ocrOptions=['Không bật','Tiếng Anh (Tinh chỉnh box)','Tiếng Nhật (Chỉ trích xuất)'];
+            const ocrSelect=ocrOptions.map(o=>`<option value="${o}" ${c.ocr_mode===o?'selected':''}>${o}</option>`).join('');
             const cfgHtml=q.is_running?'':`
                 <div class="config-panel">
                     <b>⚙️ Config:</b><br>
-                    <span class="cb"><input type="checkbox" ${c.mask_classes.includes('text')?'checked':''} onchange="toggleClass('${q.id}','text',this.checked)">text</span>
-                    <span class="cb"><input type="checkbox" ${c.mask_classes.includes('sfx')?'checked':''} onchange="toggleClass('${q.id}','sfx',this.checked)">sfx</span>
-                    <span class="cb"><input type="checkbox" ${c.mask_classes.includes('b1')?'checked':''} onchange="toggleClass('${q.id}','b1',this.checked)">b1</span>
-                    &nbsp;
-                    <label>Expand <input type="number" value="${c.expand}" onchange="setCfg('${q.id}','expand',+this.value)"></label>
-                    <label>Feather <input type="number" value="${c.feather}" onchange="setCfg('${q.id}','feather',+this.value)"></label>
-                    <label>Blur <input type="number" value="${c.blur}" onchange="setCfg('${q.id}','blur',+this.value)"></label>
+                    <div style="margin:6px 0;">${classCheckboxes}</div>
+                    <div style="margin:6px 0;">
+                        <label style="color:var(--text2)">OCR: <select onchange="setCfg('${q.id}','ocr_mode',this.value)" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 6px;font-size:12px;">${ocrSelect}</select></label>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">
+                        <label>Expand <input type="number" value="${c.expand}" onchange="setCfg('${q.id}','expand',+this.value)"></label>
+                        <label>Feather <input type="number" value="${c.feather}" onchange="setCfg('${q.id}','feather',+this.value)"></label>
+                        <label>Blur <input type="number" value="${c.blur}" onchange="setCfg('${q.id}','blur',+this.value)"></label>
+                        <label>Min Area <input type="number" value="${c.min_area}" onchange="setCfg('${q.id}','min_area',+this.value)"></label>
+                        <label>Cleanup <input type="number" value="${c.cleanup}" onchange="setCfg('${q.id}','cleanup',+this.value)"></label>
+                        <label>Overlap <input type="number" value="${c.overlap_threshold}" step="0.05" style="width:70px;" onchange="setCfg('${q.id}','overlap_threshold',+this.value)"></label>
+                        <label>Confidence <input type="number" value="${c.confidence_threshold}" step="0.05" style="width:70px;" onchange="setCfg('${q.id}','confidence_threshold',+this.value)"></label>
+                    </div>
                     <div class="mode-row" style="margin-top:8px;">
                         <span style="color:var(--text2)">Mode:</span>
                         <button class="${mode==='all'?'sel':''}" onclick="setMode('${q.id}','all')">Tất cả</button>
