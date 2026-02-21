@@ -637,6 +637,9 @@ HTML_CONTENT = """<!DOCTYPE html>
     let previewPageId = null;
     let previewPageIndex = -1;
     let currentDetections = null;
+    // Cache ảnh theo hidden_id + layer → Image object (tránh tải lại từ ZIP)
+    const imageCache = {};
+    function getCacheKey(hid, layer) { return hid + '/' + layer; }
 
     // Màu cho từng class (giống Aniga3)
     const CLASS_COLORS = {
@@ -732,7 +735,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         previewPageIndex = idx;
         const pg = currentProject.pages[idx];
         previewPageId = pg.hidden_id;
-        currentDetections = null;
+        currentDetections = undefined; // undefined = chưa fetch, null = không có
 
         document.getElementById('previewTitle').textContent = pg.display_name;
 
@@ -769,74 +772,75 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         if (tab === 'RAW' || tab === 'CLEAN' || tab === 'MASK') {
             const layer = tab.toLowerCase();
-            imgDiv.innerHTML = `<img src="/api/projects/${currentFile}/pages/${previewPageId}/${layer}" onerror="this.outerHTML='<span class=\\'no-data\\'>Không có dữ liệu</span>'">`;
+            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
+            try {
+                const img = await cachedLoadImage(previewPageId, layer);
+                imgDiv.innerHTML = '';
+                const el = document.createElement('img');
+                el.src = img.src;
+                imgDiv.appendChild(el);
+            } catch(e) {
+                imgDiv.innerHTML = '<span class="no-data">Không có dữ liệu</span>';
+            }
         }
         else if (tab === 'CLEAN+MASK') {
-            // Hiển thị ảnh clean overlay trên raw theo mask (client-side)
             imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
             try {
                 const [rawImg, cleanImg, maskImg] = await Promise.all([
-                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/raw`),
-                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/clean`),
-                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/mask`),
+                    cachedLoadImage(previewPageId, 'raw'),
+                    cachedLoadImage(previewPageId, 'clean'),
+                    cachedLoadImage(previewPageId, 'mask'),
                 ]);
                 const w = rawImg.width, h = rawImg.height;
                 const canvas = document.createElement('canvas');
                 canvas.width = w; canvas.height = h;
                 const ctx = canvas.getContext('2d');
-
-                // Vẽ raw
                 ctx.drawImage(rawImg, 0, 0);
                 const rawData = ctx.getImageData(0, 0, w, h);
-
-                // Vẽ clean
                 ctx.drawImage(cleanImg, 0, 0, w, h);
                 const cleanData = ctx.getImageData(0, 0, w, h);
-
-                // Vẽ mask
                 ctx.drawImage(maskImg, 0, 0, w, h);
                 const maskData = ctx.getImageData(0, 0, w, h);
-
-                // Blend: result = raw * (1 - mask) + clean * mask
                 const out = ctx.createImageData(w, h);
                 for (let i = 0; i < rawData.data.length; i += 4) {
                     const m = maskData.data[i] / 255;
-                    out.data[i]   = rawData.data[i]   * (1 - m) + cleanData.data[i]   * m;
-                    out.data[i+1] = rawData.data[i+1] * (1 - m) + cleanData.data[i+1] * m;
-                    out.data[i+2] = rawData.data[i+2] * (1 - m) + cleanData.data[i+2] * m;
+                    out.data[i]   = rawData.data[i]*(1-m) + cleanData.data[i]*m;
+                    out.data[i+1] = rawData.data[i+1]*(1-m) + cleanData.data[i+1]*m;
+                    out.data[i+2] = rawData.data[i+2]*(1-m) + cleanData.data[i+2]*m;
                     out.data[i+3] = 255;
                 }
                 ctx.putImageData(out, 0, 0);
                 imgDiv.innerHTML = '';
                 imgDiv.appendChild(canvas);
             } catch(e) {
-                imgDiv.innerHTML = '<span class="no-data">Lỗi khi tạo ảnh blend</span>';
+                imgDiv.innerHTML = '<span class="no-data">Thiếu ảnh Clean hoặc Mask</span>';
             }
         }
         else if (tab === 'BBOX') {
             imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
             try {
                 const [rawImg, dets] = await Promise.all([
-                    loadImage(`/api/projects/${currentFile}/pages/${previewPageId}/raw`),
+                    cachedLoadImage(previewPageId, 'raw'),
                     fetchDetections(),
                 ]);
-                const boxes = dets.boxes || [];
+                if (!dets || !dets.boxes || !dets.boxes.length) {
+                    imgDiv.innerHTML = '<span class="no-data">Chưa có dữ liệu BBox</span>';
+                    return;
+                }
+                const boxes = dets.boxes;
                 const w = rawImg.width, h = rawImg.height;
                 const canvas = document.createElement('canvas');
                 canvas.width = w; canvas.height = h;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(rawImg, 0, 0);
 
-                // Vẽ bbox
                 for (const item of boxes) {
                     const [x1,y1,x2,y2] = item.bbox;
-                    const cls = item.class;
+                    const cls = item['class'];
                     const color = CLASS_COLORS[cls] || '#ffffff';
                     ctx.strokeStyle = color;
                     ctx.lineWidth = 3;
                     ctx.strokeRect(x1, y1, x2-x1, y2-y1);
-
-                    // Label nhỏ phía trên
                     const label = `${cls} ${(item.confidence*100).toFixed(0)}%`;
                     ctx.font = 'bold 14px Inter, sans-serif';
                     const tw = ctx.measureText(label).width;
@@ -849,23 +853,19 @@ HTML_CONTENT = """<!DOCTYPE html>
                 imgDiv.innerHTML = '';
                 imgDiv.appendChild(canvas);
 
-                // Hover tooltip cho OCR text
                 canvas.onmousemove = (e) => {
                     const rect = canvas.getBoundingClientRect();
                     const scaleX = w / rect.width;
                     const scaleY = h / rect.height;
                     const mx = (e.clientX - rect.left) * scaleX;
                     const my = (e.clientY - rect.top) * scaleY;
-
                     let found = null;
                     for (const item of boxes) {
                         const [x1,y1,x2,y2] = item.bbox;
-                        if (mx >= x1 && mx <= x2 && my >= y1 && my <= y2) {
-                            found = item; break;
-                        }
+                        if (mx >= x1 && mx <= x2 && my >= y1 && my <= y2) { found = item; break; }
                     }
                     if (found && found.ocr_text) {
-                        canvas.title = `[${found.class}] ${found.ocr_text}`;
+                        canvas.title = `[${found['class']}] ${found.ocr_text}`;
                         canvas.style.cursor = 'pointer';
                     } else {
                         canvas.title = '';
@@ -873,37 +873,45 @@ HTML_CONTENT = """<!DOCTYPE html>
                     }
                 };
             } catch(e) {
-                imgDiv.innerHTML = '<span class="no-data">Lỗi khi vẽ BBox</span>';
+                imgDiv.innerHTML = '<span class="no-data">Chưa có dữ liệu BBox</span>';
             }
         }
         else if (tab === 'JSON') {
             imgDiv.innerHTML = '<span class="no-data">Xem bên phải →</span>';
             jsonPanel.style.display = '';
-            try {
-                const dets = await fetchDetections();
+            const dets = await fetchDetections();
+            if (dets) {
                 jsonPanel.textContent = JSON.stringify(dets, null, 2);
-            } catch(e) {
-                jsonPanel.textContent = 'Lỗi khi tải detections';
+            } else {
+                jsonPanel.textContent = 'Chưa có dữ liệu detections';
             }
         }
     }
 
-    function loadImage(url) {
+    // Cache-aware image loader (tải 1 lần, dùng lại mãi mãi trong session)
+    function cachedLoadImage(hid, layer) {
+        const key = getCacheKey(hid, layer);
+        if (imageCache[key]) return Promise.resolve(imageCache[key]);
         return new Promise((resolve, reject) => {
             const img = new Image();
             img.crossOrigin = 'anonymous';
-            img.onload = () => resolve(img);
+            img.onload = () => { imageCache[key] = img; resolve(img); };
             img.onerror = reject;
-            img.src = url;
+            img.src = `/api/projects/${currentFile}/pages/${hid}/${layer}`;
         });
     }
 
     async function fetchDetections() {
-        if (currentDetections) return currentDetections;
-        const res = await fetch(`/api/projects/${currentFile}/pages/${previewPageId}/detections`);
-        if (!res.ok) throw new Error('No detections');
-        currentDetections = await res.json();
-        return currentDetections;
+        if (currentDetections !== undefined) return currentDetections;
+        try {
+            const res = await fetch(`/api/projects/${currentFile}/pages/${previewPageId}/detections`);
+            if (!res.ok) { currentDetections = null; return null; }
+            currentDetections = await res.json();
+            return currentDetections;
+        } catch(e) {
+            currentDetections = null;
+            return null;
+        }
     }
 
     async function deleteCurrentPage() {
