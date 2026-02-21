@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aniga Local</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/web/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <button class="back" id="backBtn" onclick="goHome()" style="display:none;">⬅ Quay lại</button>
+        <h1 id="topTitle">🏠 Aniga Local</h1>
+    </div>
+
+    <!-- HOME VIEW -->
+    <div class="home" id="homeView">
+        <div class="home-top">
+            <h2>Danh sách dự án</h2>
+            <button class="btn-new" onclick="showModal('createModal')">+ Tạo dự án</button>
+        </div>
+        <div id="projectList">
+            <div class="msg">Đang tải...</div>
+        </div>
+    </div>
+
+    <!-- EDITOR VIEW -->
+    <div class="editor" id="editorView" style="display:none;">
+        <div class="sidebar">
+            <h2 id="sbName"></h2>
+            <div class="meta-line" id="sbMeta"></div>
+            <div class="sb-section">
+                <h4>Thao tác</h4>
+                <button class="sb-btn" onclick="showModal('addModal')">➕ Thêm trang</button>
+                <button class="sb-btn" onclick="showModal('renameModal')">✏️ Đổi tên</button>
+                <button class="sb-btn" onclick="showModal('updateModal')">🔄 Cập nhật .aniga</button>
+            </div>
+            <div class="sb-section">
+                <h4>Xuất / Tải</h4>
+                <button class="sb-btn" onclick="showModal('exportModal')">📤 Xuất ZIP</button>
+                <button class="sb-btn" onclick="exportAniga()">📥 Tải .aniga</button>
+            </div>
+            <div class="sb-section">
+                <h4>Cấu hình</h4>
+                <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px;">Flux Size</label>
+                <select class="sb-select" id="fluxSel" onchange="setFlux(this.value)">
+                    <option value="1024">1024</option>
+                    <option value="1280" selected>1280</option>
+                    <option value="1536">1536</option>
+                </select>
+            </div>
+
+            <div class="sb-section" id="aniga3Panel">
+                <h4>🤖 Aniga3 Auto-Mask</h4>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:6px;">Chạy AI tạo mask tự động</div>
+
+                <div id="a3Config" style="margin-bottom:8px;">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><input type="checkbox"
+                            id="a3Text" checked> Text</label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><input type="checkbox"
+                            id="a3SfxReal" checked> SFX (Tiếng Động)</label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><input type="checkbox"
+                            id="a3Bubbles" checked> Bong bóng thoại (b1-b5)</label>
+
+                    <label style="font-size:11px;color:var(--text2);display:block;margin:6px 0 3px;">OCR Mode</label>
+                    <select class="sb-select" id="a3Ocr">
+                        <option value="Không bật">Không bật</option>
+                        <option value="Tiếng Anh (Tinh chỉnh box)">Tiếng Anh</option>
+                        <option value="Tiếng Nhật (Chỉ trích xuất)">Tiếng Nhật</option>
+                    </select>
+                </div>
+
+                <div id="a3StatusBox"
+                    style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;font-size:11px;">
+                    <div id="a3StatusText" style="color:var(--accent);font-weight:600;margin-bottom:4px;">Đang chạy...
+                    </div>
+                    <div style="display:flex;justify-content:space-between;color:var(--text2);">
+                        <span id="a3ProgressText">0/0</span>
+                        <span id="a3Pct">0%</span>
+                    </div>
+                    <div
+                        style="width:100%;height:4px;background:var(--bg);border-radius:2px;margin-top:4px;overflow:hidden;">
+                        <div id="a3ProgressBar"
+                            style="width:0%;height:100%;background:var(--accent);transition:width 0.3s;"></div>
+                    </div>
+                </div>
+
+                <div style="display:flex;gap:4px;">
+                    <button class="sb-btn" id="btnA3Start" onclick="startAniga3()"
+                        style="flex:1;background:var(--accent);color:#fff;border:none;">▶ Start</button>
+                    <button class="sb-btn" id="btnA3Stop" onclick="stopAniga3()"
+                        style="flex:1;display:none;background:var(--bg3);color:var(--red);border:1px solid var(--border);">⏹
+                        Stop</button>
+                </div>
+            </div>
+        </div>
+        <div class="main-area">
+            <div class="page-grid" id="pageGrid"></div>
+        </div>
+    </div>
+
+    <!-- PREVIEW OVERLAY -->
+    <div class="preview-overlay" id="pvOverlay">
+        <div class="pv-topbar">
+            <h3 id="pvTitle" style="width:200px">Preview</h3>
+            <div class="pv-controls">
+                <div id="layerBtns"></div>
+                <div class="pv-sep"></div>
+                <button class="pv-nav" onclick="pvNav(-1)">◀</button>
+                <button class="pv-nav" onclick="pvNav(1)">▶</button>
+                <button class="pv-nav" onclick="pvFit()">⊡</button>
+                <button class="pv-nav" onclick="pvClose()" style="color:var(--red)">✕</button>
+            </div>
+            <div style="width:200px"></div>
+        </div>
+
+        <div class="pv-dual" id="pvDual">
+            <div class="pv-pane" id="pvPaneL" style="flex:0 0 50%">
+                <div class="pv-pane-label">RAW</div>
+                <canvas id="pvCanvasL"></canvas>
+            </div>
+
+            <div class="pv-divider" id="pvDivider"></div>
+
+            <div class="pv-pane" id="pvPaneR" style="flex:1 1 0">
+                <div class="pv-pane-label" id="pvLabelR">BLEND</div>
+                <canvas id="pvCanvasR"></canvas>
+                <div class="pv-tooltip" id="pvTip"></div>
+                <div class="brush-cursor" id="brushCursor"></div>
+            </div>
+        </div>
+
+        <div class="brush-bar" id="brushBar">
+            <button class="tool-btn active" id="btnBrush" onclick="setTool('brush')">🖌 Brush</button>
+            <button class="tool-btn" id="btnEraser" onclick="setTool('eraser')">⬛ Tẩy</button>
+            <div class="pv-sep"></div>
+            <label>Size</label><input type="range" id="brSize" min="2" max="200" value="30"
+                oninput="brushSize=+this.value;document.getElementById('brSizeVal').textContent=this.value"><span
+                class="val" id="brSizeVal">30</span>
+            <div class="pv-sep"></div>
+            <label>Softness</label><input type="range" id="brSoft" min="0" max="100" value="50"
+                oninput="brushSoft=+this.value;document.getElementById('brSoftVal').textContent=this.value"><span
+                class="val" id="brSoftVal">50</span>
+            <div class="pv-sep"></div>
+            <button class="tool-btn" onclick="maskUndo()">↩ Undo</button>
+            <button class="tool-btn" onclick="maskRedo()">↪ Redo</button>
+            <button class="save-btn" onclick="saveMaskBtn()">💾 Lưu Mask (Thủ công)</button>
+        </div>
+        <div class="pv-footer">
+            <div class="left">
+                <button class="danger" onclick="pvReset()">🔄 Reset</button>
+                <button class="danger" onclick="pvDelete()">🗑️ Xóa</button>
+            </div>
+            <span id="pvInfo"></span>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <div class="modal-bg" id="createModal">
+        <div class="modal">
+            <h3>Tạo dự án mới</h3>
+            <input type="text" id="cName" placeholder="Tên dự án">
+            <input type="file" id="cFiles" multiple accept="image/*">
+            <div id="cStatus" style="color:var(--text2);font-size:11px;"></div>
+            <div class="btn-row"><button class="btn-no" onclick="hideModals()">Hủy</button><button class="btn-ok"
+                    onclick="doCreate()">Tạo</button></div>
+        </div>
+    </div>
+
+    <div class="modal-bg" id="addModal">
+        <div class="modal">
+            <h3>➕ Thêm trang</h3>
+            <input type="file" id="addFiles" multiple accept="image/*">
+            <div class="btn-row"><button class="btn-no" onclick="hideModals()">Hủy</button><button class="btn-ok"
+                    onclick="doAdd()">Thêm</button></div>
+        </div>
+    </div>
+
+    <div class="modal-bg" id="renameModal">
+        <div class="modal">
+            <h3>✏️ Đổi tên</h3>
+            <input type="text" id="rnName" placeholder="Tên mới">
+            <div class="btn-row"><button class="btn-no" onclick="hideModals()">Hủy</button><button class="btn-ok"
+                    onclick="doRename()">Lưu</button></div>
+        </div>
+    </div>
+
+    <div class="modal-bg" id="updateModal">
+        <div class="modal">
+            <h3>🔄 Cập nhật từ .aniga</h3>
+            <p style="color:var(--text2);font-size:12px;margin-bottom:10px;">Chọn file .aniga đã xử lý xong.</p>
+            <input type="file" id="updFile" accept=".aniga">
+            <div id="updStatus" style="color:var(--text2);font-size:11px;"></div>
+            <div class="btn-row"><button class="btn-no" onclick="hideModals()">Hủy</button><button class="btn-ok"
+                    onclick="doUpdate()">Cập nhật</button></div>
+        </div>
+    </div>
+
+    <div class="modal-bg" id="exportModal">
+        <div class="modal">
+            <h3>📤 Xuất ZIP</h3>
+            <p style="color:var(--text2);font-size:12px;margin-bottom:10px;">Chọn layers:</p>
+            <label class="export-cb"><input type="checkbox" value="raw" checked> RAW (gốc)</label>
+            <label class="export-cb"><input type="checkbox" value="clean" checked> Clean</label>
+            <label class="export-cb"><input type="checkbox" value="mask" checked> Mask</label>
+            <label class="export-cb"><input type="checkbox" value="detections" checked> JSON OCR</label>
+            <label class="export-cb"><input type="checkbox" value="blend" checked> BLEND</label>
+
+            <div style="margin: 15px 0 10px 0; height: 1px; background: var(--border);"></div>
+            <p style="color:var(--text2);font-size:12px;margin-bottom:10px;">Tuỳ chọn xuất ảnh:</p>
+            <label class="export-cb">
+                <input type="checkbox" id="cbCropResize" checked> ✂️ Cắt sát ảnh thực tế & Thu nhỏ (Max 1800px)
+            </label>
+
+            <div class="btn-row"><button class="btn-no" onclick="hideModals()">Hủy</button><button class="btn-ok"
+                    onclick="doExport()">Xuất</button></div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="/web/app.js"></script>
+</body>
+
+</html>

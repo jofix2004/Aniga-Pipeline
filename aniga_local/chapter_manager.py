@@ -424,14 +424,10 @@ def merge_bundles(original_path, update_path, delete_update=False):
 # ============================================================
 # RESOLVE: Xuất sản phẩm cuối cùng
 # ============================================================
-def resolve_bundle(bundle_path, output_dir, include_layers=None):
+def resolve_bundle(bundle_path, output_dir, include_layers=None, auto_crop_resize=True):
     """
     Xuất .aniga → thư mục/ZIP với tên hiển thị.
-
-    Args:
-        bundle_path: đường dẫn file .aniga
-        output_dir: thư mục output
-        include_layers: list — ["raw", "clean", "mask", "detections"] (default: all)
+    Cập nhật: Có thêm tính năng Crop dựa vào content_bbox và Resize tối đa cạnh 1800px.
     """
     if include_layers is None:
         include_layers = ["raw", "clean", "mask", "detections"]
@@ -439,6 +435,41 @@ def resolve_bundle(bundle_path, output_dir, include_layers=None):
     manifest = read_manifest(bundle_path)
     project_name = manifest["project_name"]
     os.makedirs(output_dir, exist_ok=True)
+
+    def process_and_save_image(img_data_bytes, page_meta, dst_path, is_mask=False):
+        """Hàm con: Nhận byte ảnh nén -> Đọc -> Crop theo BBox -> Resize max 1800px -> Lưu file"""
+        from PIL import Image
+        import io
+        
+        try:
+            pil_img = Image.open(io.BytesIO(img_data_bytes))
+            if is_mask:
+                pil_img = pil_img.convert("L")
+            else:
+                pil_img = pil_img.convert("RGB")
+            
+            if auto_crop_resize:
+                # 1. Thực hiện cắt mảnh lấy khung ảnh Real theo content_bbox
+                bbox = page_meta.get("content_bbox")
+                if bbox and len(bbox) == 4:
+                    # bbox là [x_min, y_min, x_max, y_max]
+                    pil_img = pil_img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
+                    
+                # 2. Thu nhỏ nếu cạnh quá khổ 1800px
+                max_dim = 1800
+                w, h = pil_img.size
+                if max(w, h) > max_dim:
+                    scale = max_dim / float(max(w, h))
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                
+            # 3. Ghi file ra thư mục output (ưu tiên PNG giữ nét cho truyện)
+            pil_img.save(dst_path, format="PNG", optimize=True)
+            return True
+        except Exception as e:
+            print(f"⚠️ Lỗi lúc lưu ảnh xuất {dst_path}: {e}")
+            return False
 
     with zipfile.ZipFile(bundle_path, 'r') as zf:
         for page in sorted(manifest["pages"], key=lambda p: p["display_order"]):
@@ -449,16 +480,23 @@ def resolve_bundle(bundle_path, output_dir, include_layers=None):
                 if layer == "detections":
                     src = f"pages/{hidden_id}/detections.json"
                     dst = os.path.join(output_dir, f"{display_name}.json")
+                    if src in zf.namelist():
+                        data = zf.read(src)
+                        with open(dst, 'wb') as f:
+                            f.write(data)
+                
                 elif layer == "blend":
                     dst = os.path.join(output_dir, f"{display_name}_blend.png")
                     raw_src = f"pages/{hidden_id}/raw.png"
                     clean_src = f"pages/{hidden_id}/clean.png"
                     mask_src = f"pages/{hidden_id}/mask.png"
+                    
                     if raw_src in zf.namelist() and clean_src in zf.namelist() and mask_src in zf.namelist():
                         try:
                             from PIL import Image
                             import numpy as np
                             import io
+                            
                             raw_data = zf.read(raw_src)
                             clean_data = zf.read(clean_src)
                             mask_data = zf.read(mask_src)
@@ -469,27 +507,30 @@ def resolve_bundle(bundle_path, output_dir, include_layers=None):
                             
                             mask_img = mask_img.astype(np.float32) / 255.0
                             mask_img = np.expand_dims(mask_img, axis=-1)
+                            blend_numpy = (raw_img * (1 - mask_img) + clean_img * mask_img).astype(np.uint8)
                             
-                            blend_img = (raw_img * (1 - mask_img) + clean_img * mask_img).astype(np.uint8)
-                            Image.fromarray(blend_img).save(dst)
+                            # Chuyển blend NumPy ngược vào luồng Bytes để tái sử dụng hàm process_and_save_image chung
+                            blend_pil = Image.fromarray(blend_numpy)
+                            buf = io.BytesIO()
+                            blend_pil.save(buf, format="PNG")
+                            
+                            process_and_save_image(buf.getvalue(), page, dst, is_mask=False)
                         except Exception as e:
                             print(f"Lỗi tạo blend cho {hidden_id}: {e}")
                     elif raw_src in zf.namelist():
-                        # Fallback nếu chưa có clean/mask thì xuất raw
-                        data = zf.read(raw_src)
-                        with open(dst, 'wb') as f:
-                            f.write(data)
+                        # Fallback nếu chưa có clean/mask thì xuất raw và phải crop luôn
+                        process_and_save_image(zf.read(raw_src), page, dst, is_mask=False)
                     continue
-                else:
+                
+                else: 
+                    # Các layer khác như: raw, clean, mask
                     src = f"pages/{hidden_id}/{layer}.png"
                     dst = os.path.join(output_dir, f"{display_name}_{layer}.png")
+                    if layer != "blend" and src in zf.namelist():
+                        is_mask = True if layer == "mask" else False
+                        process_and_save_image(zf.read(src), page, dst, is_mask=is_mask)
 
-                if layer != "blend" and src in zf.namelist():
-                    data = zf.read(src)
-                    with open(dst, 'wb') as f:
-                        f.write(data)
-
-    print(f"📤 Đã xuất {len(manifest['pages'])} trang → {output_dir}")
+    print(f"📤 Đã trích xuất & Cắt viền 1800px {len(manifest['pages'])} trang → {output_dir}")
 
 
 # ============================================================

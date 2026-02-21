@@ -622,7 +622,7 @@ async def update_project(filename: str, update_file: UploadFile = File(...)):
 # ============================================================
 
 @app.get("/api/projects/{filename}/resolve")
-def resolve_project(filename: str, layers: str = "raw,clean,mask,detections"):
+def resolve_project(filename: str, layers: str = "raw,clean,mask,detections", crop_resize: bool = True):
     fpath = _get_project_path(filename)
     manifest = cm.read_manifest(fpath)
     safe_name = manifest["project_name"].replace(" ", "_")
@@ -630,7 +630,7 @@ def resolve_project(filename: str, layers: str = "raw,clean,mask,detections"):
     tmp_dir = tempfile.mkdtemp()
     try:
         resolve_dir = os.path.join(tmp_dir, safe_name)
-        cm.resolve_bundle(fpath, resolve_dir, include_layers=include_layers)
+        cm.resolve_bundle(fpath, resolve_dir, include_layers=include_layers, auto_crop_resize=crop_resize)
         zip_path = os.path.join(tmp_dir, f"{safe_name}.zip")
         shutil.make_archive(os.path.join(tmp_dir, safe_name), 'zip', resolve_dir)
         return FileResponse(zip_path, media_type="application/zip", filename=f"{safe_name}.zip")
