@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 import uvicorn
+from functools import lru_cache
 
 import chapter_manager as cm
 
@@ -150,19 +151,25 @@ def get_project_detail(filename: str):
 # API: Preview ảnh
 # ============================================================
 
-@app.get("/api/projects/{filename}/pages/{hidden_id}/{layer}")
-def get_page_image(filename: str, hidden_id: str, layer: str):
-    if layer not in ("raw", "clean", "mask"):
-        raise HTTPException(400, "Layer phải là raw, clean, hoặc mask")
+# Server-side cache: giữ 100 ảnh gần nhất trong bộ nhớ
+_image_cache = {}
+_image_cache_order = []
+_IMAGE_CACHE_MAX = 100
 
-    fpath = _get_project_path(filename)
+def _cached_get_page(fpath, hidden_id, layer):
+    key = f"{fpath}:{hidden_id}:{layer}"
+    if key in _image_cache:
+        return _image_cache[key]
     data = cm.get_page_from_bundle(fpath, hidden_id, layer)
-    if data is None:
-        raise HTTPException(404, f"Không tìm thấy {layer} cho page {hidden_id}")
+    if data is not None:
+        _image_cache[key] = data
+        _image_cache_order.append(key)
+        if len(_image_cache_order) > _IMAGE_CACHE_MAX:
+            old = _image_cache_order.pop(0)
+            _image_cache.pop(old, None)
+    return data
 
-    return StreamingResponse(io.BytesIO(data), media_type="image/png")
-
-
+# QUAN TRỌNG: route detections phải nằm TRƯỚC route {layer}
 @app.get("/api/projects/{filename}/pages/{hidden_id}/detections")
 def get_page_detections(filename: str, hidden_id: str):
     fpath = _get_project_path(filename)
@@ -170,6 +177,19 @@ def get_page_detections(filename: str, hidden_id: str):
     if data is None:
         raise HTTPException(404, "Không có detections cho page này")
     return data
+
+
+@app.get("/api/projects/{filename}/pages/{hidden_id}/{layer}")
+def get_page_image(filename: str, hidden_id: str, layer: str):
+    if layer not in ("raw", "clean", "mask"):
+        raise HTTPException(400, "Layer phải là raw, clean, hoặc mask")
+
+    fpath = _get_project_path(filename)
+    data = _cached_get_page(fpath, hidden_id, layer)
+    if data is None:
+        raise HTTPException(404, f"Không tìm thấy {layer} cho page {hidden_id}")
+
+    return StreamingResponse(io.BytesIO(data), media_type="image/png")
 
 
 # ============================================================
