@@ -464,32 +464,32 @@ HTML_CONTENT = """<!DOCTYPE html>
         .btn-cancel { background:var(--bg3); color:var(--text); border:1px solid var(--border)!important; }
         .btn-danger { background:rgba(248,113,113,0.1); color:var(--red); border:1px solid rgba(248,113,113,0.3)!important; }
 
-        /* ── PREVIEW MODAL (đặc biệt to) ── */
-        .preview-modal .modal { min-width:80vw; max-width:95vw; min-height:70vh; display:flex; flex-direction:column; }
-        .preview-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-        .preview-header h3 { margin:0; }
+        /* ── PREVIEW MODAL (full screen) ── */
+        .preview-modal .modal { min-width:90vw; max-width:96vw; min-height:85vh; max-height:95vh; display:flex; flex-direction:column; padding:16px 20px; overflow:hidden; }
+        .preview-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+        .preview-header h3 { margin:0; font-size:15px; }
         .preview-nav { display:flex; gap:6px; }
         .preview-nav button { background:var(--bg3); border:1px solid var(--border); color:var(--text2); width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:16px; transition:all .2s; }
         .preview-nav button:hover { border-color:var(--accent); color:var(--accent); }
 
-        .preview-tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
-        .preview-tabs button { background:var(--bg3); border:1px solid var(--border); color:var(--text2); padding:7px 16px; border-radius:8px; cursor:pointer; font-size:12px; font-weight:600; transition:all .2s; }
-        .preview-tabs button.active { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
-        .preview-tabs button:hover { border-color:var(--accent); }
+        .layer-bar { display:flex; gap:5px; margin-bottom:8px; flex-wrap:wrap; align-items:center; }
+        .layer-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text2); padding:6px 14px; border-radius:8px; cursor:pointer; font-size:11px; font-weight:700; transition:all .15s; letter-spacing:0.3px; }
+        .layer-btn.active { border-color:var(--accent); color:#fff; background:var(--accent); }
+        .layer-btn:hover { border-color:var(--accent); }
+        .layer-bar .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
+        .layer-bar .zoom-info { margin-left:auto; font-size:11px; color:var(--text3); font-weight:600; }
 
-        .preview-body { flex:1; display:flex; gap:16px; min-height:0; }
-        .preview-img-wrap { flex:1; background:var(--bg); border-radius:10px; display:flex; justify-content:center; align-items:center; overflow:hidden; position:relative; min-height:500px; }
-        .preview-img-wrap img { max-width:100%; max-height:70vh; object-fit:contain; }
-        .preview-img-wrap .no-data { color:var(--text3); font-size:14px; }
+        .preview-body { flex:1; display:flex; gap:12px; min-height:0; overflow:hidden; }
+        .canvas-wrap { flex:1; background:var(--bg); border-radius:10px; overflow:hidden; position:relative; cursor:grab; }
+        .canvas-wrap:active { cursor:grabbing; }
+        .canvas-wrap canvas { position:absolute; top:0; left:0; image-rendering:auto; }
+        .canvas-wrap .no-data { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--text3); font-size:14px; }
 
-        /* Canvas cho BBox overlay */
-        .preview-img-wrap canvas { max-width:100%; max-height:70vh; cursor:crosshair; }
+        .json-panel { width:300px; background:var(--bg3); border-radius:10px; padding:12px; overflow-y:auto; font-size:11px; font-family:'Courier New',monospace; color:var(--text2); white-space:pre-wrap; word-break:break-all; flex-shrink:0; }
 
-        /* JSON panel bên phải */
-        .json-panel { width:320px; background:var(--bg3); border-radius:10px; padding:14px; overflow-y:auto; max-height:70vh; font-size:12px; font-family:'Courier New',monospace; color:var(--text2); white-space:pre-wrap; word-break:break-all; }
-
-        .preview-actions { display:flex; gap:8px; margin-top:12px; justify-content:space-between; }
-        .preview-actions .left { display:flex; gap:6px; }
+        .preview-footer { display:flex; gap:8px; margin-top:8px; justify-content:space-between; align-items:center; }
+        .preview-footer .left { display:flex; gap:6px; }
+        .bbox-tooltip { position:absolute; background:rgba(0,0,0,0.85); color:#fff; padding:6px 10px; border-radius:6px; font-size:12px; pointer-events:none; z-index:10; max-width:300px; white-space:pre-wrap; display:none; }
 
         /* ── TOAST ── */
         .toast { position:fixed; bottom:24px; right:24px; background:var(--bg2); border:1px solid var(--accent); color:var(--text); padding:12px 22px; border-radius:10px; font-size:13px; z-index:200; display:none; animation:slideIn .3s; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
@@ -630,20 +630,25 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <div class="preview-nav">
                     <button onclick="prevPage()" title="Trang trước">◀</button>
                     <button onclick="nextPage()" title="Trang sau">▶</button>
+                    <button onclick="resetZoom()" title="Reset zoom">1:1</button>
                     <button onclick="closeModals()" title="Đóng" style="color:var(--red);">✕</button>
                 </div>
             </div>
-            <div class="preview-tabs" id="previewTabs"></div>
+            <div class="layer-bar" id="layerBar"></div>
             <div class="preview-body">
-                <div class="preview-img-wrap" id="previewImg"><span class="no-data">Chọn tab để xem</span></div>
+                <div class="canvas-wrap" id="canvasWrap">
+                    <canvas id="mainCanvas"></canvas>
+                    <div class="bbox-tooltip" id="bboxTooltip"></div>
+                    <span class="no-data" id="canvasMsg">Chọn trang để xem</span>
+                </div>
                 <div class="json-panel" id="jsonPanel" style="display:none;"></div>
             </div>
-            <div class="preview-actions">
+            <div class="preview-footer">
                 <div class="left">
                     <button class="btn-cancel btn-danger" onclick="resetCurrentPage()">🔄 Reset</button>
                     <button class="btn-cancel btn-danger" onclick="deleteCurrentPage()">🗑️ Xóa trang</button>
                 </div>
-                <div></div>
+                <div id="zoomLabel" style="font-size:11px;color:var(--text3);"></div>
             </div>
         </div>
     </div>
@@ -750,165 +755,218 @@ HTML_CONTENT = """<!DOCTYPE html>
         }).join('');
     }
 
-    // ── PREVIEW ──
-    function showPreview(idx) {
+    // ── PREVIEW (Zoom/Pan Canvas + Layer Toggle) ──
+    let activeLayer = 'RAW';
+    let layerImages = {};     // layer name -> Image or Canvas
+    let pvZoom = 1, pvPanX = 0, pvPanY = 0;
+    let pvDragging = false, pvDragStartX = 0, pvDragStartY = 0;
+    let pvImgW = 0, pvImgH = 0;
+    let pvBoxes = [];
+
+    async function showPreview(idx) {
         previewPageIndex = idx;
         const pg = currentProject.pages[idx];
         previewPageId = pg.hidden_id;
-        currentDetections = undefined; // undefined = chưa fetch, null = không có
+        currentDetections = undefined;
+        layerImages = {};
+        pvBoxes = [];
+        pvZoom = 1; pvPanX = 0; pvPanY = 0;
 
         document.getElementById('previewTitle').textContent = pg.display_name;
+        document.getElementById('jsonPanel').style.display = 'none';
+        document.getElementById('canvasMsg').style.display = '';
+        document.getElementById('canvasMsg').textContent = 'Đang tải...';
 
-        // Tạo tabs
-        const tabs = ['RAW'];
-        if (pg.has_clean) tabs.push('CLEAN');
-        if (pg.has_mask) tabs.push('MASK');
-        if (pg.has_clean && pg.has_mask) tabs.push('CLEAN+MASK');
-        if (pg.has_detections) tabs.push('BBOX');
-        if (pg.has_detections) tabs.push('JSON');
+        // Tạo layer bar
+        const layers = ['RAW'];
+        if (pg.has_clean) layers.push('CLEAN');
+        if (pg.has_mask) layers.push('MASK');
+        if (pg.has_clean && pg.has_mask) layers.push('BLEND');
+        if (pg.has_detections) layers.push('BBOX');
+        if (pg.has_detections) layers.push('JSON');
 
-        document.getElementById('previewTabs').innerHTML = tabs.map((t,i) =>
-            `<button class="${i===0?'active':''}" onclick="switchTab('${t}',this)">${t}</button>`
-        ).join('');
+        document.getElementById('layerBar').innerHTML = layers.map(l =>
+            `<button class="layer-btn${l==='RAW'?' active':''}" onclick="switchLayer('${l}',this)">${l}</button>`
+        ).join('') + '<span class="sep"></span><span class="zoom-info" id="zoomInfo">100%</span>';
 
-        switchTab('RAW', document.querySelector('#previewTabs button'));
+        activeLayer = 'RAW';
         document.getElementById('previewModal').classList.add('active');
+
+        // Preload tất cả layers song song
+        const promises = [cachedLoadImage(previewPageId, 'raw').then(img => { layerImages['RAW'] = img; pvImgW = img.width; pvImgH = img.height; })];
+        if (pg.has_clean) promises.push(cachedLoadImage(previewPageId, 'clean').then(img => layerImages['CLEAN'] = img));
+        if (pg.has_mask) promises.push(cachedLoadImage(previewPageId, 'mask').then(img => layerImages['MASK'] = img));
+        if (pg.has_detections) promises.push(fetchDetections().then(d => { if(d && d.boxes) pvBoxes = d.boxes; }));
+        await Promise.all(promises);
+
+        // Tạo BLEND nếu có
+        if (layerImages['RAW'] && layerImages['CLEAN'] && layerImages['MASK']) {
+            layerImages['BLEND'] = buildBlend(layerImages['RAW'], layerImages['CLEAN'], layerImages['MASK']);
+        }
+        // Tạo BBOX canvas nếu có
+        if (layerImages['RAW'] && pvBoxes.length) {
+            layerImages['BBOX'] = buildBBoxCanvas(layerImages['RAW'], pvBoxes);
+        }
+
+        document.getElementById('canvasMsg').style.display = 'none';
+        fitToView();
+        renderCanvas();
     }
 
-    function prevPage() {
-        if (previewPageIndex > 0) showPreview(previewPageIndex - 1);
-    }
-    function nextPage() {
-        if (previewPageIndex < currentProject.pages.length - 1) showPreview(previewPageIndex + 1);
+    function buildBlend(rawImg, cleanImg, maskImg) {
+        const w = rawImg.width, h = rawImg.height;
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(rawImg, 0, 0); const rd = ctx.getImageData(0,0,w,h);
+        ctx.drawImage(cleanImg, 0, 0, w, h); const cd = ctx.getImageData(0,0,w,h);
+        ctx.drawImage(maskImg, 0, 0, w, h); const md = ctx.getImageData(0,0,w,h);
+        const out = ctx.createImageData(w, h);
+        for (let i=0; i<rd.data.length; i+=4) {
+            const m = md.data[i]/255;
+            out.data[i]=rd.data[i]*(1-m)+cd.data[i]*m;
+            out.data[i+1]=rd.data[i+1]*(1-m)+cd.data[i+1]*m;
+            out.data[i+2]=rd.data[i+2]*(1-m)+cd.data[i+2]*m;
+            out.data[i+3]=255;
+        }
+        ctx.putImageData(out, 0, 0);
+        return c;
     }
 
-    async function switchTab(tab, btn) {
-        document.querySelectorAll('#previewTabs button').forEach(b => b.classList.remove('active'));
+    function buildBBoxCanvas(rawImg, boxes) {
+        const w = rawImg.width, h = rawImg.height;
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(rawImg, 0, 0);
+        for (const item of boxes) {
+            const [x1,y1,x2,y2] = item.bbox;
+            const cls = item['class'];
+            const color = CLASS_COLORS[cls] || '#ffffff';
+            ctx.strokeStyle = color; ctx.lineWidth = 3;
+            ctx.strokeRect(x1, y1, x2-x1, y2-y1);
+            const label = `${cls} ${(item.confidence*100).toFixed(0)}%`;
+            ctx.font = 'bold 14px Inter,sans-serif';
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = color; ctx.fillRect(x1, y1-20, tw+8, 20);
+            ctx.fillStyle = '#000'; ctx.fillText(label, x1+4, y1-5);
+        }
+        return c;
+    }
+
+    function switchLayer(layer, btn) {
+        document.querySelectorAll('.layer-btn').forEach(b => b.classList.remove('active'));
         if (btn) btn.classList.add('active');
-
-        const imgDiv = document.getElementById('previewImg');
-        const jsonPanel = document.getElementById('jsonPanel');
-        jsonPanel.style.display = 'none';
-
-        if (tab === 'RAW' || tab === 'CLEAN' || tab === 'MASK') {
-            const layer = tab.toLowerCase();
-            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
-            try {
-                const img = await cachedLoadImage(previewPageId, layer);
-                imgDiv.innerHTML = '';
-                const el = document.createElement('img');
-                el.src = img.src;
-                imgDiv.appendChild(el);
-            } catch(e) {
-                imgDiv.innerHTML = '<span class="no-data">Không có dữ liệu</span>';
-            }
+        activeLayer = layer;
+        const jp = document.getElementById('jsonPanel');
+        if (layer === 'JSON') {
+            jp.style.display = '';
+            const dets = currentDetections;
+            jp.textContent = dets ? JSON.stringify(dets, null, 2) : 'Chưa có dữ liệu';
+        } else {
+            jp.style.display = 'none';
         }
-        else if (tab === 'CLEAN+MASK') {
-            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
-            try {
-                const [rawImg, cleanImg, maskImg] = await Promise.all([
-                    cachedLoadImage(previewPageId, 'raw'),
-                    cachedLoadImage(previewPageId, 'clean'),
-                    cachedLoadImage(previewPageId, 'mask'),
-                ]);
-                const w = rawImg.width, h = rawImg.height;
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(rawImg, 0, 0);
-                const rawData = ctx.getImageData(0, 0, w, h);
-                ctx.drawImage(cleanImg, 0, 0, w, h);
-                const cleanData = ctx.getImageData(0, 0, w, h);
-                ctx.drawImage(maskImg, 0, 0, w, h);
-                const maskData = ctx.getImageData(0, 0, w, h);
-                const out = ctx.createImageData(w, h);
-                for (let i = 0; i < rawData.data.length; i += 4) {
-                    const m = maskData.data[i] / 255;
-                    out.data[i]   = rawData.data[i]*(1-m) + cleanData.data[i]*m;
-                    out.data[i+1] = rawData.data[i+1]*(1-m) + cleanData.data[i+1]*m;
-                    out.data[i+2] = rawData.data[i+2]*(1-m) + cleanData.data[i+2]*m;
-                    out.data[i+3] = 255;
-                }
-                ctx.putImageData(out, 0, 0);
-                imgDiv.innerHTML = '';
-                imgDiv.appendChild(canvas);
-            } catch(e) {
-                imgDiv.innerHTML = '<span class="no-data">Thiếu ảnh Clean hoặc Mask</span>';
-            }
-        }
-        else if (tab === 'BBOX') {
-            imgDiv.innerHTML = '<span class="no-data">Đang tải...</span>';
-            try {
-                const [rawImg, dets] = await Promise.all([
-                    cachedLoadImage(previewPageId, 'raw'),
-                    fetchDetections(),
-                ]);
-                if (!dets || !dets.boxes || !dets.boxes.length) {
-                    imgDiv.innerHTML = '<span class="no-data">Chưa có dữ liệu BBox</span>';
-                    return;
-                }
-                const boxes = dets.boxes;
-                const w = rawImg.width, h = rawImg.height;
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(rawImg, 0, 0);
-
-                for (const item of boxes) {
-                    const [x1,y1,x2,y2] = item.bbox;
-                    const cls = item['class'];
-                    const color = CLASS_COLORS[cls] || '#ffffff';
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 3;
-                    ctx.strokeRect(x1, y1, x2-x1, y2-y1);
-                    const label = `${cls} ${(item.confidence*100).toFixed(0)}%`;
-                    ctx.font = 'bold 14px Inter, sans-serif';
-                    const tw = ctx.measureText(label).width;
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x1, y1-20, tw+8, 20);
-                    ctx.fillStyle = '#000';
-                    ctx.fillText(label, x1+4, y1-5);
-                }
-
-                imgDiv.innerHTML = '';
-                imgDiv.appendChild(canvas);
-
-                canvas.onmousemove = (e) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const scaleX = w / rect.width;
-                    const scaleY = h / rect.height;
-                    const mx = (e.clientX - rect.left) * scaleX;
-                    const my = (e.clientY - rect.top) * scaleY;
-                    let found = null;
-                    for (const item of boxes) {
-                        const [x1,y1,x2,y2] = item.bbox;
-                        if (mx >= x1 && mx <= x2 && my >= y1 && my <= y2) { found = item; break; }
-                    }
-                    if (found && found.ocr_text) {
-                        canvas.title = `[${found['class']}] ${found.ocr_text}`;
-                        canvas.style.cursor = 'pointer';
-                    } else {
-                        canvas.title = '';
-                        canvas.style.cursor = 'crosshair';
-                    }
-                };
-            } catch(e) {
-                imgDiv.innerHTML = '<span class="no-data">Chưa có dữ liệu BBox</span>';
-            }
-        }
-        else if (tab === 'JSON') {
-            imgDiv.innerHTML = '<span class="no-data">Xem bên phải →</span>';
-            jsonPanel.style.display = '';
-            const dets = await fetchDetections();
-            if (dets) {
-                jsonPanel.textContent = JSON.stringify(dets, null, 2);
-            } else {
-                jsonPanel.textContent = 'Chưa có dữ liệu detections';
-            }
-        }
+        renderCanvas();
     }
 
-    // Cache-aware image loader (tải 1 lần, dùng lại mãi mãi trong session)
+    function renderCanvas() {
+        const canvas = document.getElementById('mainCanvas');
+        const wrap = document.getElementById('canvasWrap');
+        const ww = wrap.clientWidth, wh = wrap.clientHeight;
+        canvas.width = ww; canvas.height = wh;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, ww, wh);
+
+        const src = layerImages[activeLayer] || layerImages['RAW'];
+        if (!src) return;
+
+        ctx.save();
+        ctx.translate(pvPanX, pvPanY);
+        ctx.scale(pvZoom, pvZoom);
+        ctx.drawImage(src, 0, 0);
+        ctx.restore();
+
+        document.getElementById('zoomInfo').textContent = `${Math.round(pvZoom*100)}%`;
+        document.getElementById('zoomLabel').textContent = `${pvImgW}×${pvImgH}px  |  ${Math.round(pvZoom*100)}%`;
+    }
+
+    function fitToView() {
+        const wrap = document.getElementById('canvasWrap');
+        const ww = wrap.clientWidth, wh = wrap.clientHeight;
+        if (!pvImgW || !pvImgH) return;
+        pvZoom = Math.min(ww / pvImgW, wh / pvImgH, 1);
+        pvPanX = (ww - pvImgW * pvZoom) / 2;
+        pvPanY = (wh - pvImgH * pvZoom) / 2;
+    }
+
+    function resetZoom() {
+        fitToView();
+        renderCanvas();
+    }
+
+    // Zoom (scroll)
+    document.addEventListener('wheel', (e) => {
+        if (!document.getElementById('previewModal').classList.contains('active')) return;
+        const wrap = document.getElementById('canvasWrap');
+        if (!wrap.contains(e.target)) return;
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const oldZoom = pvZoom;
+        const factor = e.deltaY < 0 ? 1.15 : 1/1.15;
+        pvZoom = Math.max(0.1, Math.min(20, pvZoom * factor));
+        // Zoom toàn bộ về phía con trỏ
+        pvPanX = mx - (mx - pvPanX) * (pvZoom / oldZoom);
+        pvPanY = my - (my - pvPanY) * (pvZoom / oldZoom);
+        renderCanvas();
+    }, {passive: false});
+
+    // Pan (drag)
+    (function(){
+        const wrap = document.getElementById('canvasWrap');
+        wrap.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            pvDragging = true;
+            pvDragStartX = e.clientX - pvPanX;
+            pvDragStartY = e.clientY - pvPanY;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!pvDragging) return;
+            pvPanX = e.clientX - pvDragStartX;
+            pvPanY = e.clientY - pvDragStartY;
+            renderCanvas();
+        });
+        window.addEventListener('mouseup', () => { pvDragging = false; });
+    })();
+
+    // BBox hover tooltip
+    document.getElementById('canvasWrap').addEventListener('mousemove', (e) => {
+        if (activeLayer !== 'BBOX' || !pvBoxes.length) { document.getElementById('bboxTooltip').style.display = 'none'; return; }
+        const wrap = document.getElementById('canvasWrap');
+        const rect = wrap.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const imgX = (cx - pvPanX) / pvZoom;
+        const imgY = (cy - pvPanY) / pvZoom;
+        let found = null;
+        for (const item of pvBoxes) {
+            const [x1,y1,x2,y2] = item.bbox;
+            if (imgX >= x1 && imgX <= x2 && imgY >= y1 && imgY <= y2) { found = item; break; }
+        }
+        const tip = document.getElementById('bboxTooltip');
+        if (found && found.ocr_text) {
+            tip.style.display = 'block';
+            tip.style.left = (cx + 12) + 'px';
+            tip.style.top = (cy - 8) + 'px';
+            tip.textContent = `[${found['class']}] ${found.ocr_text}`;
+        } else {
+            tip.style.display = 'none';
+        }
+    });
+
+    function prevPage() { if (previewPageIndex > 0) showPreview(previewPageIndex - 1); }
+    function nextPage() { if (previewPageIndex < currentProject.pages.length - 1) showPreview(previewPageIndex + 1); }
+
+    // Cache-aware image loader
     function cachedLoadImage(hid, layer) {
         const key = getCacheKey(hid, layer);
         if (imageCache[key]) return Promise.resolve(imageCache[key]);
@@ -928,10 +986,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             if (!res.ok) { currentDetections = null; return null; }
             currentDetections = await res.json();
             return currentDetections;
-        } catch(e) {
-            currentDetections = null;
-            return null;
-        }
+        } catch(e) { currentDetections = null; return null; }
     }
 
     async function deleteCurrentPage() {
