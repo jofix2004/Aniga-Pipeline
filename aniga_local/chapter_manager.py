@@ -59,7 +59,7 @@ def _natural_sort_key(s):
 def create_bundle(image_paths, chapter_name, output_path):
     """
     Tạo file .aniga mới từ danh sách ảnh raw.
-    Lưu ảnh gốc nguyên vẹn, không resize.
+    Ảnh gốc sẽ được tự động đệm nền trắng thành 2048x2048.
     """
     image_paths = sorted(image_paths, key=_natural_sort_key)
 
@@ -72,8 +72,38 @@ def create_bundle(image_paths, chapter_name, output_path):
             hidden_id = _generate_hidden_id()
             time.sleep(0.01)
 
-            # Copy file gốc nguyên vẹn vào ZIP
-            zf.write(img_path, f"pages/{hidden_id}/raw.png")
+            # --- AUTO CENTER & PAD TO 2048x2048 ---
+            content_bbox = None
+            try:
+                from PIL import Image
+                import io
+                
+                img_pil = Image.open(img_path).convert("RGB")
+                canvas_size = 2048
+                margin = 60
+                
+                orig_w, orig_h = img_pil.size
+                max_size = canvas_size - (margin * 2)
+                scale = min(max_size / orig_w, max_size / orig_h)
+                new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+                
+                img_resized = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                canvas = Image.new('RGB', (canvas_size, canvas_size), (255, 255, 255))
+                
+                x, y = (canvas_size - new_w) // 2, (canvas_size - new_h) // 2
+                canvas.paste(img_resized, (x, y))
+                
+                img_byte_arr = io.BytesIO()
+                canvas.save(img_byte_arr, format='PNG')
+                img_bytes = img_byte_arr.getvalue()
+                
+                zf.writestr(f"pages/{hidden_id}/raw.png", img_bytes)
+                content_bbox = [x, y, x + new_w, y + new_h]
+            except Exception as e:
+                # Fallback nguyên vẹn nếu lỗi đọc
+                print(f"⚠️ Lỗi padding ảnh {img_path}: {e}")
+                zf.write(img_path, f"pages/{hidden_id}/raw.png")
+            # --------------------------------------
 
             pages.append({
                 "hidden_id": hidden_id,
@@ -82,7 +112,8 @@ def create_bundle(image_paths, chapter_name, output_path):
                 "has_clean": False,
                 "has_mask": False,
                 "has_detections": False,
-                "error": None
+                "error": None,
+                "content_bbox": content_bbox
             })
 
         manifest = {
@@ -418,11 +449,42 @@ def resolve_bundle(bundle_path, output_dir, include_layers=None):
                 if layer == "detections":
                     src = f"pages/{hidden_id}/detections.json"
                     dst = os.path.join(output_dir, f"{display_name}.json")
+                elif layer == "blend":
+                    dst = os.path.join(output_dir, f"{display_name}_blend.png")
+                    raw_src = f"pages/{hidden_id}/raw.png"
+                    clean_src = f"pages/{hidden_id}/clean.png"
+                    mask_src = f"pages/{hidden_id}/mask.png"
+                    if raw_src in zf.namelist() and clean_src in zf.namelist() and mask_src in zf.namelist():
+                        try:
+                            from PIL import Image
+                            import numpy as np
+                            import io
+                            raw_data = zf.read(raw_src)
+                            clean_data = zf.read(clean_src)
+                            mask_data = zf.read(mask_src)
+                            
+                            raw_img = np.array(Image.open(io.BytesIO(raw_data)).convert("RGB"))
+                            clean_img = np.array(Image.open(io.BytesIO(clean_data)).convert("RGB"))
+                            mask_img = np.array(Image.open(io.BytesIO(mask_data)).convert("L"))
+                            
+                            mask_img = mask_img.astype(np.float32) / 255.0
+                            mask_img = np.expand_dims(mask_img, axis=-1)
+                            
+                            blend_img = (raw_img * (1 - mask_img) + clean_img * mask_img).astype(np.uint8)
+                            Image.fromarray(blend_img).save(dst)
+                        except Exception as e:
+                            print(f"Lỗi tạo blend cho {hidden_id}: {e}")
+                    elif raw_src in zf.namelist():
+                        # Fallback nếu chưa có clean/mask thì xuất raw
+                        data = zf.read(raw_src)
+                        with open(dst, 'wb') as f:
+                            f.write(data)
+                    continue
                 else:
                     src = f"pages/{hidden_id}/{layer}.png"
                     dst = os.path.join(output_dir, f"{display_name}_{layer}.png")
 
-                if src in zf.namelist():
+                if layer != "blend" and src in zf.namelist():
                     data = zf.read(src)
                     with open(dst, 'wb') as f:
                         f.write(data)
@@ -449,9 +511,36 @@ def add_pages_to_bundle(bundle_path, image_paths):
         hidden_id = _generate_hidden_id()
         time.sleep(0.01)
 
-        # Đọc bytes gốc
-        with open(img_path, 'rb') as f:
-            existing_files[f"pages/{hidden_id}/raw.png"] = f.read()
+        # --- AUTO CENTER & PAD TO 2048x2048 ---
+        content_bbox = None
+        try:
+            from PIL import Image
+            import io
+            
+            img_pil = Image.open(img_path).convert("RGB")
+            canvas_size = 2048
+            margin = 60
+            
+            orig_w, orig_h = img_pil.size
+            max_size = canvas_size - (margin * 2)
+            scale = min(max_size / orig_w, max_size / orig_h)
+            new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+            
+            img_resized = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            canvas = Image.new('RGB', (canvas_size, canvas_size), (255, 255, 255))
+            
+            x, y = (canvas_size - new_w) // 2, (canvas_size - new_h) // 2
+            canvas.paste(img_resized, (x, y))
+            
+            img_byte_arr = io.BytesIO()
+            canvas.save(img_byte_arr, format='PNG')
+            existing_files[f"pages/{hidden_id}/raw.png"] = img_byte_arr.getvalue()
+            content_bbox = [x, y, x + new_w, y + new_h]
+        except Exception as e:
+            print(f"⚠️ Lỗi padding ảnh thêm vào {img_path}: {e}")
+            with open(img_path, 'rb') as f:
+                existing_files[f"pages/{hidden_id}/raw.png"] = f.read()
+        # --------------------------------------
 
         page_entry = {
             "hidden_id": hidden_id,
@@ -460,7 +549,8 @@ def add_pages_to_bundle(bundle_path, image_paths):
             "has_clean": False,
             "has_mask": False,
             "has_detections": False,
-            "error": None
+            "error": None,
+            "content_bbox": content_bbox
         }
         manifest["pages"].append(page_entry)
 

@@ -316,28 +316,6 @@ class FluxProcessor:
 # CORE FUNCTIONS FROM STANDALONE_PIPELINE.PY
 # ===================================================================
 
-def center_image(img_pil, canvas_size=2048, margin=20):
-    """Resize and center image on white canvas"""
-    original_width, original_height = img_pil.size
-    max_size = canvas_size - (margin * 2)
-    scale = min(max_size / original_width, max_size / original_height)
-    new_width = int(original_width * scale)
-    new_height = int(original_height * scale)
-    
-    img_resized = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    canvas = Image.new('RGB', (canvas_size, canvas_size), (255, 255, 255))
-    
-    x = (canvas_size - new_width) // 2
-    y = (canvas_size - new_height) // 2
-    
-    if img_resized.mode == 'RGBA':
-        canvas.paste(img_resized, (x, y), img_resized)
-    else:
-        canvas.paste(img_resized, (x, y))
-        
-    return canvas
-
-
 
 def preprocess_grayscale_invert(img):
     """Convert to grayscale and invert colors"""
@@ -752,23 +730,9 @@ def stack_images_directional(master_cv, tiles_data):
     return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8))
 
 def stack_images(master_img, tile_results):
-    # Legacy wrapper for back-compat if needed, but we should use directional
-    # If tile_index is missing, this might fail.
-    # But for now, let's keep it acting as a proxy or just leave the old one?
-    # No, we replace it with the NEW one if tiles have index.
+    """
+    Sử dụng kỹ thuật Alpha Compositing (Painter's Algorithm) có Directional Mask
+    để xếp và làm mượt viền 4 ảnh Tile đè lên Canvas 2048.
+    """
     return stack_images_directional(master_img, tile_results)
-    
-    for res in tile_results:
-        if not res.get("success") or res.get("warped_img") is None: continue
-        img_f = cv2.cvtColor(res["warped_img"], cv2.COLOR_BGR2RGB).astype(np.float32)
-        mask = res["warped_mask"] if res["warped_mask"] is not None else np.ones((h, w), dtype=np.uint8) * 255
-        dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-        acc_color += img_f * dist[:, :, np.newaxis]
-        acc_weight += dist
-        
-    blended = np.zeros_like(master_rgb)
-    mask_exists = acc_weight > 0
-    blended[mask_exists] = acc_color[mask_exists] / acc_weight[mask_exists][:, np.newaxis]
-    blended[~mask_exists] = master_rgb[~mask_exists]
-    return Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8))
 

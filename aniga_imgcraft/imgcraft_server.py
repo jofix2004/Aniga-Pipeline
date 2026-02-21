@@ -108,9 +108,10 @@ def _worker_loop():
             # Đọc flux_size từ manifest config
             imgcraft_config = manifest.get("imgcraft_config", {})
             flux_size = imgcraft_config.get("flux_size", 1280)
+            content_bbox = next_page.get("content_bbox")
 
             # Gọi core FluxProcessor
-            clean_img = _process_single_page(raw_img, flux_size=flux_size)
+            clean_img = _process_single_page(raw_img, flux_size=flux_size, content_bbox=content_bbox)
 
             # Transactional save
             cm.save_page_to_dir(item["working_dir"], hidden_id, "clean", clean_img)
@@ -131,7 +132,7 @@ def _worker_loop():
     state.current_page = None
 
 
-def _process_single_page(raw_pil, flux_size=1280):
+def _process_single_page(raw_pil, flux_size=1280, content_bbox=None):
     """
     Xử lý 1 trang raw → clean sử dụng core algorithm.
     flux_size: kích thước resize tile trước khi đưa vào Flux (1024/1280/1536)
@@ -140,19 +141,32 @@ def _process_single_page(raw_pil, flux_size=1280):
         raise Exception("FluxProcessor chưa được init. Chạy cell khởi tạo trên notebook trước.")
 
     try:
-        # 1. Tạo Canvas & Master Data
-        master_img_pil = imgcraft_core.center_image(raw_pil)
+        # 1. Master Data (Giả định ảnh raw_pil đã được resize 2048x2048 từ Local)
+        master_img_pil = raw_pil
         master_cv = cv2.cvtColor(np.array(master_img_pil), cv2.COLOR_RGB2BGR)
         master_data = imgcraft_core.prepare_master_data(master_cv)
 
-        # 2. Cắt 4 tiles trên RAM
-        coords = [
-            (250, 20),         # Tile 0: Top-Left
-            (774, 20),        # Tile 1: Top-Right
-            (250, 1004),      # Tile 2: Bottom-Left
-            (774, 1004)     # Tile 3: Bottom-Right
-        ]
+        # 2. Cắt 4 tiles trên RAM (Kích thước gốc 1024)
+        # Ý đồ: Cắt ảnh dựa vào nội dung thật (content_bbox). Phù hợp khổ ngang lẫn dọc
         size = 1024
+        if content_bbox:
+            x_left, y_top, x_right_raw, y_bottom_raw = content_bbox
+            # Tính toán 2 góc còn lại để quét trọn ảnh, tối đa 1024, không vọt ra ngoài
+            x_right = max(x_left, x_right_raw - size)
+            y_bottom = max(y_top, y_bottom_raw - size)
+        else:
+            # Fallback cũ lấy trục dọc trọng tâm nếu ảnh cũ chưa có bbox
+            x_left = 250
+            x_right = 774
+            y_top = 60
+            y_bottom = 964
+
+        coords = [
+            (x_left, y_top),         # Tile 0: Top-Left
+            (x_right, y_top),        # Tile 1: Top-Right
+            (x_left, y_bottom),      # Tile 2: Bottom-Left
+            (x_right, y_bottom)      # Tile 3: Bottom-Right
+        ]
         tiles_pil = []
         for (x, y) in coords:
             box = (x, y, x + size, y + size)
@@ -170,14 +184,6 @@ def _process_single_page(raw_pil, flux_size=1280):
             
             res = imgcraft_core.process_tile_core(clean_tile_cv, master_cv, master_data, refine=True)
             res["tile_index"] = i
-            
-            # Color match (Hist L)
-            if res.get("success") and res.get("warped_img") is not None:
-                matched_img = imgcraft_core.match_histogram_l_channel(
-                    res["warped_img"], master_cv, res["warped_mask"], master_data["ink_mask"]
-                )
-                res["warped_img"] = matched_img
-
             tile_results.append(res)
             
         # 5. Smart Stitch → trả ảnh clean 2048x2048
