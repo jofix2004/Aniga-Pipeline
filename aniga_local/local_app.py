@@ -148,34 +148,56 @@ def get_project_detail(filename: str):
 
 
 # ============================================================
-# API: Preview ảnh
+# API: Preview ảnh — Cache & Preload
 # ============================================================
 
-# Server-side cache: giữ 100 ảnh gần nhất trong bộ nhớ
+# Server-side cache: key = "filepath:hidden_id:layer" → bytes
 _image_cache = {}
-_image_cache_order = []
-_IMAGE_CACHE_MAX = 100
+_detections_cache = {}
 
-def _cached_get_page(fpath, hidden_id, layer):
-    key = f"{fpath}:{hidden_id}:{layer}"
-    if key in _image_cache:
-        return _image_cache[key]
-    data = cm.get_page_from_bundle(fpath, hidden_id, layer)
-    if data is not None:
-        _image_cache[key] = data
-        _image_cache_order.append(key)
-        if len(_image_cache_order) > _IMAGE_CACHE_MAX:
-            old = _image_cache_order.pop(0)
-            _image_cache.pop(old, None)
-    return data
+def _preload_bundle(fpath):
+    """Mở ZIP 1 lần, đọc TẤT CẢ ảnh + detections vào cache."""
+    try:
+        manifest = cm.read_manifest(fpath)
+        with zipfile.ZipFile(fpath, 'r') as zf:
+            namelist = set(zf.namelist())
+            for page in manifest["pages"]:
+                hid = page["hidden_id"]
+                for layer in ("raw", "clean", "mask"):
+                    arcname = f"pages/{hid}/{layer}.png"
+                    if arcname in namelist:
+                        key = f"{fpath}:{hid}:{layer}"
+                        _image_cache[key] = zf.read(arcname)
+                # Detections
+                det_name = f"pages/{hid}/detections.json"
+                if det_name in namelist:
+                    _detections_cache[f"{fpath}:{hid}"] = json.loads(zf.read(det_name))
+        return len(manifest["pages"])
+    except Exception as e:
+        print(f"⚠️ Preload error: {e}")
+        return 0
+
+
+@app.post("/api/projects/{filename}/preload")
+def preload_project(filename: str):
+    """Nạp toàn bộ ảnh vào RAM cache — gọi 1 lần khi mở dự án."""
+    fpath = _get_project_path(filename)
+    count = _preload_bundle(fpath)
+    return {"status": "ok", "cached_pages": count}
+
 
 # QUAN TRỌNG: route detections phải nằm TRƯỚC route {layer}
 @app.get("/api/projects/{filename}/pages/{hidden_id}/detections")
 def get_page_detections(filename: str, hidden_id: str):
     fpath = _get_project_path(filename)
+    # Thử cache trước
+    det_key = f"{fpath}:{hidden_id}"
+    if det_key in _detections_cache:
+        return _detections_cache[det_key]
     data = cm.get_detections_from_bundle(fpath, hidden_id)
     if data is None:
         raise HTTPException(404, "Không có detections cho page này")
+    _detections_cache[det_key] = data
     return data
 
 
@@ -185,7 +207,13 @@ def get_page_image(filename: str, hidden_id: str, layer: str):
         raise HTTPException(400, "Layer phải là raw, clean, hoặc mask")
 
     fpath = _get_project_path(filename)
-    data = _cached_get_page(fpath, hidden_id, layer)
+    key = f"{fpath}:{hidden_id}:{layer}"
+    data = _image_cache.get(key)
+    if data is None:
+        # Fallback: đọc từ ZIP nếu chưa preload
+        data = cm.get_page_from_bundle(fpath, hidden_id, layer)
+        if data is not None:
+            _image_cache[key] = data
     if data is None:
         raise HTTPException(404, f"Không tìm thấy {layer} cho page {hidden_id}")
 
@@ -330,10 +358,15 @@ async def update_project(filename: str, update_file: UploadFile = File(...)):
             out.write(content)
 
         result = cm.merge_bundles(fpath, tmp_path, delete_update=True)
-        # Clear server cache cho file này
+        # Clear server cache (images + detections) cho file này
         keys_to_del = [k for k in _image_cache if k.startswith(fpath + ":")]
         for k in keys_to_del:
             _image_cache.pop(k, None)
+        det_keys = [k for k in _detections_cache if k.startswith(fpath + ":")]
+        for k in det_keys:
+            _detections_cache.pop(k, None)
+        # Re-preload file đã merge
+        _preload_bundle(fpath)
         result["cache_bust"] = True
         return result
     except Exception as e:
@@ -730,6 +763,8 @@ HTML_CONTENT = """<!DOCTYPE html>
     // ── DETAIL ──
     async function openProject(filename) {
         currentFile = filename;
+        // Preload tất cả ảnh vào RAM server-side trước
+        fetch('/api/projects/'+filename+'/preload', {method:'POST'});
         const res = await fetch('/api/projects/'+filename);
         currentProject = await res.json();
         renderDetail();
